@@ -391,3 +391,32 @@ prints starts with `WKGB `, the pages' `console.log` goes to stdout too.
   `/usr/bin/webkit-browser https://en.wikipedia.org/wiki/Raspberry_Pi` from foot; grade §9 G0–G7.
   The first line to look for is G0's: the absence of `Disabled hardware acceleration because GTK
   failed to initialize GL`, then `WPEB-WEBKIT swap-chain … type=texture-dmabuf`.
+
+## 11. Paint-path measurement (step 1, 2026-10-09, build of 10-08 23:45, `gtkpaint-*` cycles)
+
+One image, both browsers, patch 0105 + `grade-gtk-paint.py`:
+
+| arm | player fps | painted % | GTK UI fps | web frames sent/s | MotionMark-quick |
+|---|---|---|---|---|---|
+| WebKitGTK, HEVC HLS 1080p30 | 29.9 | 95.2 | 28.6 | 28.5 | — |
+| WPE, HEVC HLS 1080p30 | 30.0 | 99.7 | — | — | — |
+| WebKitGTK, MP4 1080p60 | 54.2 | **47.2** | 27.4 | 27.3 | — |
+| WPE, MP4 1080p60 | 54.1 | 81.6 | — | — | — |
+| WebKitGTK, MotionMark | — | — | 30.0 | 29.7 | **2.60** |
+| WPE, MotionMark | — | — | — | — | **74.99** |
+
+Per frame in the GTK UI (avg ms, the same in all three arms): **wait 0.3–0.5** (GDK's free-running
+clock costs nothing), **before 5–6** (GDK's per-paint cairo surface allocation and clear), **draw
+~7** (`gdk_cairo_draw_from_gl`: `alpha_bits=8`, so the full-view backdrop upload plus blend),
+**after ~2**, so ~15 ms of UI work per frame. But frames arrive only every **33–41 ms**. The other
+~20 ms is the web process rendering the next frame, which it cannot start until GTK's FrameDone:
+exactly one frame in flight, so the two sides run in series and the rate is capped near 30 fps.
+At 60 fps content the web process sends 27 frames/s while the UI is idle more than half the time,
+and MotionMark, which lowers its complexity until it holds its frame rate, collapses to 2.60.
+
+**Verdict (pre-registered readings):** "web sent/s < content fps while the UI is idle" means
+**step 2** first: let the web process render frame N+1 while GTK paints frame N (FrameDone when a
+frame is received, with a second pending slot), which should lift the cap toward
+1/max(15 ms, 20 ms) ≈ 50 fps. **Step 3** (cut GTK's ~15 ms per frame: opaque frames to skip the
+alpha backdrop upload, and the per-paint cairo surface) is the second lever. GTK 4 is not needed
+for the first gain.
