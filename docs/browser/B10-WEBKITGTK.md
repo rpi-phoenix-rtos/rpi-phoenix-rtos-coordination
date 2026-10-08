@@ -351,8 +351,20 @@ prints starts with `WKGB `, the pages' `console.log` goes to stdout too.
 
 1. **GDK GL on our Mesa (§3.1)**: GLES-only + `GDK_GL=gles`, never run on Phoenix. Fallback
    exists (CPU raster + SHM), so the browser works either way; the risk is speed.
-2. **GTK 3 GL-composited window pacing**: frames are presented by GDK's frame clock and
-   `eglSwapBuffers`; WPE needed three Phoenix-specific pacing patches. Expect similar work.
+2. **GTK 3 GL-composited window pacing.** *Corrected 2026-10-08, from reading the 2.54 and GTK
+   3.24.52 sources:*
+   - **FrameDone goes before GDK swaps.** `AcceleratedBackingStore::paint` sends it right after
+     drawing.
+   - **GDK's clock is not tied to the compositor in GL mode.** `end_paint` clears
+     `pending_commit`, so no frame callback is requested, and `eglSwapInterval(0)` is set. The
+     clock is a free-running ~60 Hz timer.
+   - **Every paint pays a full-view upload.** Our frames are AB24, which has alpha, so
+     `gdk_cairo_draw_from_gl` first uploads the cairo surface under the view as a new texture,
+     then blends the page over it.
+
+   WPE's pacing patches do not carry over: 0019 is entirely `UIProcess/wpe`, and only the
+   web-process half of 0020 applies. The paint watch (ports branch `gtk-frame-watch`, patch
+   0105) measures which of these costs dominates; gate in `tools/browser/webkitgtk/`.
 3. **Static link of a second GTK-based WebKit**: GResource bundles, `--gc-sections` dropping
    constructors (the B6 `g_bytes_get_data` lesson), one harfbuzz in the closure.
 4. **Two WebKit builds per image build** while both ports ship (§6); ccache size.
