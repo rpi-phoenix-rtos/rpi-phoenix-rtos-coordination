@@ -527,10 +527,10 @@ window. Open **Applications → Internet → WebKit Browser**, or from the termi
 | F11 | full screen |
 | Ctrl+Q | quit |
 
-- **Downloads** go to `/root/Downloads` (a second file with the same name gets ` (2)`), with
+- **Downloads** go to `Downloads` in your home directory (a second file with the same name gets ` (2)`), with
   their progress in the bar at the top of the window (`--download-dir=DIR` to change it).
 - Cookies (no third-party ones), local storage and the disk cache are kept under
-  `/root/.local/share/webkit-browser` and `/root/.cache/webkit-browser`; `--private` keeps
+  `~/.local/share/webkit-browser` and `~/.cache/webkit-browser`; `--private` keeps
   nothing.
 - Pages are drawn on the GPU when GTK gets an OpenGL ES context from Mesa (the default). If the
   terminal shows `Disabled hardware acceleration because GTK failed to initialize GL`, the browser

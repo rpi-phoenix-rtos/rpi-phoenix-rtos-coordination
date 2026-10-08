@@ -3,8 +3,8 @@
 Browser milestone B10 ([PLAN](PLAN.md)): an owner-usable desktop browser on the XFCE session
 (labwc, Wayland) with tabs and downloads, plus its documentation.
 
-Status 2026-10-08: **design (this note) and phase-2 port + shell on branches; `webkit-browser`
-compiles and links on the host (§8); no Pi cycle yet.**
+Status 2026-10-08: **build 65: G1 PASS, G0 FAIL (cause found and fixed, §3.1.1: ports
+`ac790dc`); gate commands in §9.1.**
 - Coordination repo: branch `b10-webkitgtk` (this note).
 - phoenix-rtos-ports: branch `b10-webkitgtk` (port `webkit_gtk`), based on master `b1334a8`
   (master moved past `e4d9a3c` while this was written; the branch takes 0033/0034 as merged).
@@ -130,6 +130,32 @@ never edited.
   half), and the UI process wraps each buffer in `BufferEGLImage`.
 - Native fences: patch 0016 already keeps fence fds in the web process on Phoenix
   (`useExplicitSync()` false); the GTK UI process then never sees one.
+
+### 3.1.1 G0 on the Pi, build 65: GDK never saw `GDK_GL=gles`
+
+Build 65 (ports `02ce45c`): G1 passed (the window opens, Wikipedia renders, 0 faults), G0
+failed: `Disabled hardware acceleration because GTK failed to initialize GL: No GL
+implementation is available`, then `swap-chain … type=shm display=none hardware-acceleration=0`.
+
+**Cause: our launcher's order, not GDK, epoxy or Mesa.** `webkit-browser` set `GDK_GL=gles`
+*after* `g_option_context_parse()` with `gtk_get_option_group()`. That option group runs
+`gdk_pre_parse()` as its pre-parse hook, and `gdk_pre_parse()` is where GDK reads `GDK_GL`, once
+(`gdk/gdk.c:318`). So GDK kept desktop GL; `gdk_wayland_display_init_gl()` called
+`eglBindAPI(EGL_OPENGL_API)` (`gdk/wayland/gdkglcontext-wayland.c:333`), which Mesa's
+GLES-only wayland variant refuses; that function then returns FALSE, and its caller reports
+"No GL implementation is available" (`:472`). Proven on the host with the host's GTK 3.24.52:
+`tools/browser/webkitgtk/gdkgl-order.c` gives `use_es=0` when `GDK_GL=gles` is set after the
+parse and `use_es=1` before it.
+
+Fix (ports `ac790dc`): `GDK_GL`, the Wayland display lookup and `gdk_set_allowed_backends()`
+come before the parse. The program now also checks GDK's GL itself once the window is up and
+logs one line, `WKGB gdk-gl ok use_es=1 version=M.m` or `WKGB gdk-gl failed error=…`; on
+failure it repeats GDK's EGL steps on GDK's own `wl_display` and logs
+`WKGB egl-probe platform_wayland= display= initialize= version= bind_es= bind_gl=
+create_context= error=0x… vendor=…`, which names any remaining failing step without another
+build. What G0 cannot rule out from the host: the later steps (EGL config, context creation,
+GDK's GL-composited window on our Mesa) — the `gdk-gl` line covers them, since it realizes a
+context on the browser window.
 
 ### 3.2 The rest
 
@@ -283,6 +309,22 @@ line), `webkit-browser` started from the XFCE menu entry or `webkit-browser URL`
 | G5 | video page | `b8.html` H.264 720p and the HEVC 1080p30 HLS ladder play (`hw=1` for HEVC), controls work |
 | G6 | numbers | painted fps of G5's 1080p30 HEVC and MotionMark-quick, next to `wpe-browser` on the same image |
 | G7 | HDMI shot | one frame with two tabs and the downloads bar, kept as `docs/browser/b10-webkitgtk.png` |
+
+### 9.1 Commands (build with ports `d15e17a` or later, USE checks)
+
+Run in foot inside the XFCE session (or from the autostart gate script); every line the program
+prints starts with `WKGB `, the pages' `console.log` goes to stdout too.
+
+| # | Command | Grade on |
+|---|---|---|
+| G0 | `webkit-browser https://en.wikipedia.org/wiki/Raspberry_Pi` | `WKGB gdk-gl ok use_es=1`, no `Disabled hardware acceleration`, `WPEB-WEBKIT swap-chain … type=texture-dmabuf`. If `gdk-gl failed`: the `egl-probe` line names the step |
+| G1 | (same) | window on HDMI, `load finished … title=Raspberry Pi - Wikipedia` |
+| G2 | `webkit-browser --tab-cycle=10 file:///usr/share/webkit-browser/start.html https://en.wikipedia.org/wiki/Raspberry_Pi` | two `load finished`, `tab switch page=2/2 …` / `1/2` alternating, HDMI shows the page named. Ctrl+T/Ctrl+W need a keyboard: by hand |
+| G3 | `webkit-browser 'file:///usr/share/webkit-browser/checks/b10.html?download=1'` | `download started`, `download destination $HOME/Downloads/b10-download.bin` (build 65 session: `HOME=/tmp/xfce-session-home`), `download finished … received=1048576`; `sha256sum` of that file = `06b7bbfb7824aa03382051691630eb26de85102d1b08a81e907ec0744cd8a286`; the downloads bar on HDMI. Over HTTP: `--download=http://10.42.0.1:8091/<file>` on any page |
+| G4 | the same page without `?download=1` | `<select>` popup, `<datalist>`, colour/date/file pickers, alert/confirm/prompt: need a pointer (by hand); each choice logs `B10 …` |
+| G5 | `webkit-browser 'file:///usr/share/wpe-browser/b8.html?src=file:///usr/share/video-demo/h264-720p30-aac.mp4'`, then the HEVC ladder URL of `b8-stream.sh` (`http://10.42.0.1:8091/…`) | `B8PAGE …` lines as with wpe-browser, `WPEB-MEDIA … hw=1` for HEVC |
+| G6 | G5's HEVC 1080p30 with `--present-stats=5` | `present-stats … fps=` (frames GDK painted the window) next to wpe-browser's painted fps on the same image |
+| G7 | G2's two tabs + G3's download | HDMI frame → `docs/browser/b10-webkitgtk.png` |
 
 ## 10. Risks
 
