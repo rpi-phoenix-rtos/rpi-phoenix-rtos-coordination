@@ -2,7 +2,7 @@
 
 This guide is for someone with a Raspberry Pi 4 running the Phoenix-RTOS image. It covers
 booting the image, the XFCE desktop on Wayland, the X11 desktop, the games, the video
-player, the PDF reader, networking (Ethernet and WiFi), audio and input. It ends with the
+player, the PDF reader, networking (Ethernet and WiFi), audio, input and USB storage. It ends with the
 [showcase](#9-the-showcase--the-best-setup-in-one-sitting): one recommended order for showing
 the whole system.
 
@@ -19,7 +19,7 @@ To build the image, see [BUILD.md](BUILD.md) for an SD card, or
 5. [The XFCE desktop (Wayland)](#5-the-xfce-desktop-wayland)
 6. [Games](#6-games)
 7. [Video, PDF, X11 and the other applications](#7-video-pdf-x11-and-the-other-applications)
-8. [Networking, audio and input](#8-networking-audio-and-input)
+8. [Networking, audio, input and USB storage](#8-networking-audio-input-and-usb-storage)
 9. [The showcase — the best setup in one sitting](#9-the-showcase--the-best-setup-in-one-sitting)
 10. [Troubleshooting](#10-troubleshooting)
 
@@ -583,7 +583,7 @@ terminal sets its own `TERM`.
 
 ---
 
-## 8. Networking, audio and input
+## 8. Networking, audio, input and USB storage
 
 ### 8.1 Ethernet
 
@@ -681,6 +681,47 @@ Wayland desktop (`/dev/kbd0`, `/dev/mouse0`). Plug them in before power-on. The 
 
 Bluetooth is not usable: the radio comes up, but there is no Bluetooth host stack.
 
+### 8.6 USB storage (a pen drive)
+
+A USB stick plugged into the Pi (tested with a USB 3 stick) appears as a block device, one device per
+partition of its MBR partition table: **`/dev/umass0`** for the first partition, `/dev/umass1` for
+the second, and so on. `ls /dev` shows them.
+
+**Only ext2 is supported.** A stick formatted on a PC with FAT32, exFAT or NTFS will not
+mount. Format it on a Linux machine first. This erases the stick, so check the device name with
+`lsblk`:
+
+```
+sudo mkfs.ext2 -L PHOENIX /dev/sdX1        # the stick's first partition on the Linux PC
+```
+
+**Mount it** from psh (psh's `mount` takes positional arguments, not `-t`):
+
+```
+mkdir /mnt/usb
+mount /dev/umass0 /mnt/usb ext2 0
+ls /mnt/usb
+```
+
+Files on it can then be read and written by every program: `cp`, Thunar on the desktop, the
+video player (`video-play /mnt/usb/clip.mp4`), Atril, and the WebKit Browser's downloads
+(`--download-dir=/mnt/usb`).
+
+**Unmount it by the device, not by the mount point**, before you pull the stick out:
+
+```
+umount /dev/umass0
+```
+
+- `umount /mnt/usb` (by mount point) is not supported and fails.
+- An unmount while a file is still being written is refused: wait for the write to finish and
+  run it again. Only an unmount that succeeds guarantees the data is on the stick.
+- Pulling a stick out while it is mounted has not been tested. Unmount first.
+- Speed, measured with a USB 3 stick: reading ~47 MB/s through the filesystem (59 MB/s raw),
+  writing ~18 MB/s (40 MB/s for the first 256 MiB, which go to the stick's fast cache).
+- The image has no `mkfs`, `fsck` or `fdisk`: prepare and check the stick on a PC
+  (`sudo e2fsck -f /dev/sdX1`).
+
 ---
 
 ## 9. The showcase — the best setup in one sitting
@@ -756,6 +797,8 @@ This is the recommended way to show the whole system, with the best settings for
 | `wifi connect` fails | Check the passphrase (8–63 characters) and that the SSID has no space. `wifi status` shows the state. |
 | HTTPS certificate errors | The clock is wrong: run `ntpclient -s pool.ntp.org`. |
 | Keyboard or mouse do nothing | Plug them in before power-on. |
+| `mount /dev/umass0 …` fails | The stick must be ext2 (FAT/exFAT/NTFS do not mount), and the mount point must exist (`mkdir /mnt/usb`). `ls /dev` shows whether `umass0` is there. |
+| `umount /mnt/usb` fails | Unmount by the device: `umount /dev/umass0`. |
 | `vkquake` shows a black screen | On its first start it compiles its Vulkan pipelines for about 75 seconds before the first frame. Wait; later starts take ~3 s (the shader cache in `/.cache/mesa_shader_cache`; delete that directory to force a recompile). |
 | A game never returns to psh | The games and their demos run until you quit them. Quit through the game's console or menu, or `export GAMEDRM_EXIT_SECS=<N>` before starting it. |
 
