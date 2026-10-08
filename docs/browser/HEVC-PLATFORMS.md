@@ -282,6 +282,12 @@ Findings:
 - **Verdict:** HEVC from Vimeo means a 10-bit PQ upload, a spoofed iOS UA, claiming an HDR display,
   CPU 10→8-bit conversion with no tone mapping (a grey picture), and hoping the stream is not DRM'd.
   Not a "high quality" demo. It becomes interesting only after MSE plus real HDR→SDR tone mapping.
+- **Plays over MSE on the Pi as H.264** (build 68, 2026-10-08, `mselive` cycle): the embed
+  `player.vimeo.com/video/1228694119?autoplay=1&muted=1` (a third-party staff pick) loads in 11.9 s.
+  The player picks `avc1.64001F` at 960×540 and plays at 24 fps with 0 stalls and 0 dropped
+  frames; 1338 of 1341 frames are painted and A/V is −65 ms. HEVC, Dolby Vision and AV1 are
+  refused, as designed. 720p is labelled `avc1.640020` (level 3.2), which the type answers refuse
+  (`reason=h264-level`), so the 540p rendition is the top one we take.
 
 ### Bunny Stream, Cloudflare Stream, Mux, Wistia, api.video
 
@@ -372,6 +378,9 @@ master-playlist handling, not the 8-bit fast path. bipbop's 1080p is 60 fps.
 - The player has a native-HLS path, `canPlayType("application/x-mpegURL")`. Its MSE codec check
   covers only `avc1`, `av01` and `vp09`.
 - **Verdict:** no. H.264 1080p is also beyond our software decoder.
+- On the Pi (build 68, 2026-10-08, `mselive`): the embed redirects to
+  `geo.dailymotion.com/player.html` and answers **HTTP 403**. MSE is present, but no player
+  starts and no media request is made.
 
 ### Rumble — H.264 only
 
