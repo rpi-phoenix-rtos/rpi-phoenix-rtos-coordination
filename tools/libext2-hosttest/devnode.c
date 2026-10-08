@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -53,7 +54,7 @@ int main(int argc, char **argv)
     unsigned char *pat = malloc(csz), *back = malloc(csz);
     for (size_t i = 0; i < csz; i++) pat[i] = (unsigned char)(i * 13 + 7);
     ck("create the canary", ext2_create(fs, ROOT_INO, "canary", 6, NULL, S_IFREG | 0644, &canary) >= 0);
-    ck("write the canary", ext2_write(fs, canary, 0, (const char *)pat, csz) == (ssize_t)csz);
+    ck("write the canary", ext2_pwrite(fs, canary, 0, (const char *)pat, csz) == (ssize_t)csz);
 
     struct node nodes[] = {
         { "chr",  S_IFCHR | 0666 },

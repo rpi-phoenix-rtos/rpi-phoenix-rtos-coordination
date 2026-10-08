@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -31,7 +32,7 @@ static void trial(const char *img, const char *label, size_t writeSz, size_t tru
     int cerr = ext2_create(fs, ROOT_INO, nm, (size_t)n, NULL, S_IFREG | 0644, &id);
     if (cerr < 0) { printf("%-42s CREATE FAILED err=%d\n", label, cerr); um(fs); close(devFd); return; }
     char *buf = calloc(writeSz ? writeSz : 1, 1);
-    if (writeSz) ext2_write(fs, id, 0, buf, writeSz);
+    if (writeSz) ext2_pwrite(fs, id, 0, buf, writeSz);
     long long blocksAfterWrite = 0;
     ext2_getattr(fs, id, atBlocks, &blocksAfterWrite);
     if (twoStep) ext2_truncate(fs, id, 4096);

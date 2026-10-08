@@ -47,6 +47,11 @@ ifneq ($(wildcard $(LIBPH)/libm/include/math.h),)
   PHX_FCFG := $(BUILD)/fcfg/libm_feature_config.h
   PHX_INC := -I$(LIBPH)/libm/include -I$(BUILD)/fcfg
   PHX_CFG :=
+  # libphoenix builds the libmcs sources against the same headers
+  # (LIBM_USE_LIBMCS=y: -Ilibm/include -I$(BUILD_DIR)/include), not libmcs's
+  # own libm/include, whose libm_internal_config.h needs a generated
+  # libm_feature_config.h too.
+  MCS_INC := $(PHX_INC) -I$(MCSROOT)/libm/common
 else
   PHX_FCFG :=
   PHX_INC := $(MCS_INC)
@@ -104,7 +109,7 @@ $(BUILD)/x86/phs.o: $(PHX_SRCS) $(PHX_HDRS) $(PHX_FCFG) inc-sw/arch.h Makefile
 	$(call build_phx,$(X86_CC),$(X86_CFLAGS),inc-sw,$(BUILD)/x86/phs)
 	./rename.sh phs $(BUILD)/x86/phs $@ $(X86_TOOLS) $(MATHSYMS)
 
-$(BUILD)/x86/mcs.o: $(MCS_SRCS) Makefile
+$(BUILD)/x86/mcs.o: $(MCS_SRCS) $(PHX_FCFG) Makefile
 	$(call build_mcs,$(X86_CC),$(X86_CFLAGS),$(BUILD)/x86/mcs)
 	./rename.sh mcs $(BUILD)/x86/mcs $@ $(X86_TOOLS) $(MATHSYMS)
 

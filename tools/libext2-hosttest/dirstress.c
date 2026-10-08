@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -97,7 +98,7 @@ int main(int argc, char **argv)
             if (!fileLive[i][j] &&
                     ext2_create(fs, dirId[i], fn, strlen(fn), NULL, S_IFREG | 0644, &fid) >= 0) {
                 fileLive[i][j] = 1;
-                (void)ext2_write(fs, fid, 0, dn, strlen(dn));
+                (void)ext2_pwrite(fs, fid, 0, dn, strlen(dn));
             }
         }
         else if (action < 55) {                       /* remove a file from it */

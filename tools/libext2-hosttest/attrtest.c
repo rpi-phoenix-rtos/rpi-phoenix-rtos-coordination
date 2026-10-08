@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -47,7 +48,7 @@ int main(int argc, char **argv)
     /* --- ordinary setattr on a regular file --- */
     id_t f;
     ck("create a file", ext2_create(fs, ROOT_INO, "af", 2, NULL, S_IFREG | 0644, &f) >= 0);
-    ck("write 8 KiB", ext2_write(fs, f, 0, (const char *)"x", 1) == 1);
+    ck("write 8 KiB", ext2_pwrite(fs, f, 0, (const char *)"x", 1) == 1);
     ck("setattr mode", ext2_setattr(fs, f, atMode, S_IFREG | 0600, NULL, 0) >= 0);
     long long v = 0;
     ck("getattr mode reads it back", ext2_getattr(fs, f, atMode, &v) >= 0 && (v & 0777) == 0600);
@@ -98,7 +99,7 @@ int main(int argc, char **argv)
         size_t want = 256u * 1024u;
         char *z = calloc(want, 1);
         ck("create a file to consume space", ext2_create(fs, ROOT_INO, "sf", 2, NULL, S_IFREG | 0644, &big) >= 0);
-        ck("write 256 KiB", ext2_write(fs, big, 0, z, want) == (ssize_t)want);
+        ck("write 256 KiB", ext2_pwrite(fs, big, 0, z, want) == (ssize_t)want);
         free(z);
         ck("statfs again", ext2_statfs(fs, &b, sizeof(b)) >= 0);
 

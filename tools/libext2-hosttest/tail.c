@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -41,12 +42,12 @@ static void trial(const char *img, size_t initial, size_t truncTo, size_t reExte
 
     unsigned char *fill = malloc(initial);
     memset(fill, 0xAA, initial);
-    ext2_write(fs, id, 0, (const char *)fill, initial);
+    ext2_pwrite(fs, id, 0, (const char *)fill, initial);
 
     ext2_truncate(fs, id, truncTo);
     /* extend again by writing past the truncation point */
     const char *mark = "END";
-    ext2_write(fs, id, (off_t)reExtendAt, mark, 3);
+    ext2_pwrite(fs, id, (off_t)reExtendAt, mark, 3);
 
     size_t gap = reExtendAt - truncTo;
     unsigned char *got = malloc(gap ? gap : 1);

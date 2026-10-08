@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -104,7 +105,7 @@ int main(int argc, char **argv)
     id_t f1;
     ck("create a file", ext2_create(fs, ROOT_INO, "small", 5, NULL, S_IFREG | 0644, &f1) >= 0);
     rdOps = wrOps = rdBytes = wrBytes = 0;
-    ssize_t w = ext2_write(fs, f1, 0, "hello world", 11);
+    ssize_t w = ext2_pwrite(fs, f1, 0, "hello world", 11);
     ck("write 11 bytes", w == 11);
     printf("     -> ONE 11-byte write that ALLOCATES a block: %llu device writes (%llu bytes), %llu reads\n",
            wrOps, wrBytes, rdOps);
@@ -113,7 +114,7 @@ int main(int argc, char **argv)
      * less. This separates the allocator's cost from the write() tail, and is
      * the case where the superblock write-back is provably a no-op. */
     rdOps = wrOps = rdBytes = wrBytes = noopWrites = noopBytes = 0;
-    ck("overwrite in place", ext2_write(fs, f1, 0, "HELLO WORLD", 11) == 11);
+    ck("overwrite in place", ext2_pwrite(fs, f1, 0, "HELLO WORLD", 11) == 11);
     printf("     -> ONE 11-byte OVERWRITE (no allocation):     %llu device writes (%llu bytes), %llu reads\n",
            wrOps, wrBytes, rdOps);
     printf("     -> of those, %llu wrote bytes ALREADY on the device (%llu bytes) = pure wear\n\n",
@@ -127,10 +128,50 @@ int main(int argc, char **argv)
      * written last, not what was written first. */
     ck("content matches last write", memcmp(buf, "HELLO WORLD", 11) == 0);
 
+    /* ---- the write contract: the new offset comes back, O_APPEND ----
+     * ext2_write() takes the offset by pointer and returns the new one (the
+     * server answers mtWrite with it); O_APPEND writes at the end of the file
+     * whatever offset is passed. ext2_pwrite() checks the plain case on every
+     * write; these are the cases it does not reach. */
+    id_t fa;
+    off_t pos;
+    ck("create append file", ext2_create(fs, ROOT_INO, "append", 6, NULL, S_IFREG | 0644, &fa) >= 0);
+    pos = 0;
+    ck("write \"abc\" at 0", ext2_write(fs, fa, &pos, "abc", 3, 0) == 3);
+    ck("  ...offset reported as 3", pos == 3);
+    pos = 0;
+    ck("O_APPEND \"de\" passing offset 0", ext2_write(fs, fa, &pos, "de", 2, O_APPEND) == 2);
+    ck("  ...offset reported as the new end, 5", pos == 5);
+    pos = 100;
+    ck("O_APPEND \"f\" passing offset 100 (past the end)", ext2_write(fs, fa, &pos, "f", 1, O_APPEND) == 1);
+    ck("  ...offset reported as 6", pos == 6);
+    long long asz = 0;
+    ck("  ...size is 6, no hole at 100", ext2_getattr(fs, fa, atSize, &asz) >= 0 && asz == 6);
+    memset(buf, 0, sizeof(buf));
+    ck("  ...reads back \"abcdef\"", ext2_read(fs, fa, 0, buf, sizeof(buf)) == 6 && memcmp(buf, "abcdef", 6) == 0);
+    pos = 1;
+    ck("overwrite \"X\" at 1 without O_APPEND", ext2_write(fs, fa, &pos, "X", 1, 0) == 1);
+    ck("  ...offset 2, size still 6", pos == 2 && ext2_getattr(fs, fa, atSize, &asz) >= 0 && asz == 6);
+    pos = 3;
+    ck("zero-length write", ext2_write(fs, fa, &pos, "", 0, 0) == 0);
+    ck("  ...leaves the offset at 3", pos == 3);
+    pos = 7;
+    ck("write to a directory fails", ext2_write(fs, ROOT_INO, &pos, "x", 1, 0) < 0);
+    ck("  ...and leaves the offset alone", pos == 7);
+    pos = 7;
+    ck("O_APPEND to a directory fails", ext2_write(fs, ROOT_INO, &pos, "x", 1, O_APPEND) < 0);
+    ck("  ...and leaves the offset alone", pos == 7);
+
     /* ---- a hole must read as zeros ---- */
     id_t f2;
     ck("create sparse file", ext2_create(fs, ROOT_INO, "sparse", 6, NULL, S_IFREG | 0644, &f2) >= 0);
-    ck("write at offset 1 MiB", ext2_write(fs, f2, 1024 * 1024, "tail", 4) == 4);
+    ck("write at offset 1 MiB", ext2_pwrite(fs, f2, 1024 * 1024, "tail", 4) == 4);
+    /* O_APPEND goes by the size, not by the allocated blocks: past the hole */
+    pos = 0;
+    ck("O_APPEND to the sparse file", ext2_write(fs, f2, &pos, "+app", 4, O_APPEND) == 4);
+    ck("  ...lands at 1 MiB + 4", pos == 1024 * 1024 + 8);
+    memset(buf, 0, sizeof(buf));
+    ck("  ...reads back \"tail+app\"", ext2_read(fs, f2, 1024 * 1024, buf, 8) == 8 && memcmp(buf, "tail+app", 8) == 0);
     char z[512];
     memset(z, 0xFF, sizeof(z));
     ck("hole reads as zeros", ext2_read(fs, f2, 4096, z, sizeof(z)) == (ssize_t)sizeof(z));
@@ -144,7 +185,7 @@ int main(int argc, char **argv)
     size_t big = 2u * 1024u * 1024u;
     unsigned char *src = malloc(big), *back = malloc(big);
     for (size_t i = 0; i < big; i++) src[i] = (unsigned char)(i * 7 + (i >> 11));
-    ck("write 2 MiB", ext2_write(fs, f3, 0, (const char *)src, big) == (ssize_t)big);
+    ck("write 2 MiB", ext2_pwrite(fs, f3, 0, (const char *)src, big) == (ssize_t)big);
     memset(back, 0, big);
     ck("read 2 MiB back", ext2_read(fs, f3, 0, (char *)back, big) == (ssize_t)big);
     ck("2 MiB byte-identical", memcmp(src, back, big) == 0);
@@ -154,7 +195,7 @@ int main(int argc, char **argv)
         char nm[32]; int n = snprintf(nm, sizeof(nm), "f%03d", i);
         id_t id;
         if (ext2_create(fs, ROOT_INO, nm, (size_t)n, NULL, S_IFREG | 0644, &id) < 0) { ck("bulk create", 0); break; }
-        if (ext2_write(fs, id, 0, nm, (size_t)n) != n) { ck("bulk write", 0); break; }
+        if (ext2_pwrite(fs, id, 0, nm, (size_t)n) != n) { ck("bulk write", 0); break; }
     }
     ck("created 60 files", 1);
     for (int i = 0; i < 60; i += 2) {

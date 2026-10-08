@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -58,7 +59,7 @@ int main(int argc, char **argv)
     /* ---- hard links ---- */
     id_t f;
     ck("create a file", ext2_create(fs, ROOT_INO, "h1", 2, NULL, S_IFREG | 0644, &f) >= 0);
-    ck("write to it", ext2_write(fs, f, 0, "payload", 7) == 7);
+    ck("write to it", ext2_pwrite(fs, f, 0, "payload", 7) == 7);
     ck("links == 1", links_of(fs, f) == 1);
 
     ck("add a second name", ext2_link(fs, ROOT_INO, "h2", 2, f) >= 0);
@@ -85,7 +86,7 @@ int main(int argc, char **argv)
 
     id_t sl;
     ck("create short symlink", ext2_create(fs, ROOT_INO, "sl-short", 8, NULL, S_IFLNK | 0777, &sl) >= 0);
-    ck("write short target", ext2_write(fs, sl, 0, shortTgt, strlen(shortTgt)) == (ssize_t)strlen(shortTgt));
+    ck("write short target", ext2_pwrite(fs, sl, 0, shortTgt, strlen(shortTgt)) == (ssize_t)strlen(shortTgt));
     char got[256];
     memset(got, 0, sizeof(got));
     ck("read short target back", ext2_read(fs, sl, 0, got, strlen(shortTgt)) == (ssize_t)strlen(shortTgt));
@@ -93,7 +94,7 @@ int main(int argc, char **argv)
 
     id_t ll;
     ck("create long symlink", ext2_create(fs, ROOT_INO, "sl-long", 7, NULL, S_IFLNK | 0777, &ll) >= 0);
-    ssize_t w = ext2_write(fs, ll, 0, longTgt, strlen(longTgt));
+    ssize_t w = ext2_pwrite(fs, ll, 0, longTgt, strlen(longTgt));
     ck("write long target", w == (ssize_t)strlen(longTgt));
     memset(got, 0, sizeof(got));
     ck("read long target back", ext2_read(fs, ll, 0, got, strlen(longTgt)) == (ssize_t)strlen(longTgt));

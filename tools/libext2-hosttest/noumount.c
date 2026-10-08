@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -58,8 +59,8 @@ int main(int argc, char **argv)
             if (ext2_create(fs, ROOT_INO, nm, (size_t)l, NULL, S_IFREG | 0644, &f) < 0) continue;
             char buf[4096];
             memset(buf, 0xAA, sizeof(buf));
-            ext2_write(fs, f, 0, buf, sizeof(buf));
-            ext2_write(fs, f, 1024 * 1024, buf, sizeof(buf));   /* a hole */
+            ext2_pwrite(fs, f, 0, buf, sizeof(buf));
+            ext2_pwrite(fs, f, 1024 * 1024, buf, sizeof(buf));   /* a hole */
             printf("  file %s (ino %llu) unlink: %d\n", nm, (unsigned long long)f,
                    ext2_unlink(fs, ROOT_INO, nm, (size_t)l));
         }

@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "inode.h"
@@ -219,7 +220,7 @@ int main(int argc, char **argv)
     /* symlink: what libext2_create() does for otSymlink -- create, write target */
     t = tick();
     ck("symlink /A/sl", ext2_create(fs, A, "sl", 2, NULL, S_IFLNK | 0777, &sl) >= 0 &&
-                        ext2_write(fs, sl, 0, "f", 1) == 1);
+                        ext2_pwrite(fs, sl, 0, "f", 1) == 1);
     ckDir("symlink stamps A", fs, A, t);
 
     /* mknod/mkfifo: what libext2_create() does for otDev -- a create with a
@@ -272,7 +273,7 @@ int main(int argc, char **argv)
     /* a content change of a file is NOT a change of its directory */
     sA = mem(fs, A);
     t = tick();
-    ck("write to /A/h", ext2_write(fs, f, 0, "data", 4) == 4);
+    ck("write to /A/h", ext2_pwrite(fs, f, 0, "data", 4) == 4);
     ckSame("writing a file leaves its directory alone", fs, A, sA);
     sF = mem(fs, f);
     ck("...and stamps the file itself", sF.m == t && sF.c == t);

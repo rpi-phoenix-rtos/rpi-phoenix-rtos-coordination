@@ -33,6 +33,7 @@
 #include <sys/stat.h>
 #include <sys/threads.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -110,7 +111,7 @@ static void *worker(void *arg)
             unsigned char *b = malloc(len);
             for (size_t k = 0; k < len; k++) b[k] = (unsigned char)rand_r(&seed);
             mutexLock(fs->lock);
-            ssize_t wr = ext2_write(fs, ids[i], (off_t)off, (const char *)b, len);
+            ssize_t wr = ext2_pwrite(fs, ids[i], (off_t)off, (const char *)b, len);
             mutexUnlock(fs->lock);
             if (wr == (ssize_t)len) {
                 memcpy(model[i] + off, b, len);

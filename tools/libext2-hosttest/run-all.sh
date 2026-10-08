@@ -29,7 +29,7 @@ mkimg() {  # mkimg <path> <mb> <blocksz>
 	mke2fs -q -t ext2 -b "$3" -I 128 -N 4096 -F "$1" >/dev/null 2>&1
 }
 
-for p in harness stress dirstress linkstress uaf devnode bigdir attrtest dirtime noumount busy; do build "$p"; done
+for p in harness stress dirstress linkstress uaf devnode bigdir attrtest dirtime noumount busy rmdirfull; do build "$p"; done
 
 # The concurrency harness needs REAL mutexes and pthreads. Everything else runs
 # on the no-op lock path, which keeps those runs simple; this one must not.
@@ -43,7 +43,8 @@ gcc -O1 -g -fsanitize=address,undefined -DEOK=0 -DSHIM_REAL_MUTEX \
 echo "=== single-shot ==="
 for b in 1024 4096; do
 	printf "  %-10s %s: " harness "$b"; "$here/run.sh" "$b" 2>&1 | grep -o "OVERALL: .*" || fails=1
-	for p in linkstress devnode attrtest dirtime; do
+	# rmdirfull: rmdir of a non-empty multi-block directory (KNOWN-ISSUES P28)
+	for p in linkstress devnode attrtest dirtime rmdirfull; do
 		img=/tmp/ra-$p-$b.img; mkimg "$img" 48 "$b"
 		ASAN_OPTIONS=detect_leaks=0 "$here/$p" "$img" >/dev/null 2>&1; rc=$?
 		e2fsck -fn "$img" >/dev/null 2>&1; frc=$?

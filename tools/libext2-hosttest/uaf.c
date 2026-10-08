@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -32,18 +33,18 @@ int main(int argc, char **argv)
     id_t id;
     if (which == 1) {                       /* plain file, unlink to 0 links */
         ext2_create(fs, ROOT_INO, "a", 1, NULL, S_IFREG | 0644, &id);
-        ext2_write(fs, id, 0, "x", 1);
+        ext2_pwrite(fs, id, 0, "x", 1);
         ext2_unlink(fs, ROOT_INO, "a", 1);
     }
     else if (which == 2) {                  /* SHORT symlink (target in inode) */
         ext2_create(fs, ROOT_INO, "s", 1, NULL, S_IFLNK | 0777, &id);
-        ext2_write(fs, id, 0, "/short", 6);
+        ext2_pwrite(fs, id, 0, "/short", 6);
         ext2_unlink(fs, ROOT_INO, "s", 1);
     }
     else if (which == 3) {                  /* LONG symlink (target in a block) */
         char t[200]; memset(t, 'L', sizeof(t)); t[0] = '/'; t[sizeof(t)-1] = 0;
         ext2_create(fs, ROOT_INO, "l", 1, NULL, S_IFLNK | 0777, &id);
-        ext2_write(fs, id, 0, t, strlen(t));
+        ext2_pwrite(fs, id, 0, t, strlen(t));
         ext2_unlink(fs, ROOT_INO, "l", 1);
     }
     else if (which == 4) {                  /* directory, rmdir */
@@ -52,7 +53,7 @@ int main(int argc, char **argv)
     }
     else if (which == 5) {                  /* hard link, remove ONE name */
         ext2_create(fs, ROOT_INO, "h1", 2, NULL, S_IFREG | 0644, &id);
-        ext2_write(fs, id, 0, "x", 1);
+        ext2_pwrite(fs, id, 0, "x", 1);
         ext2_link(fs, ROOT_INO, "h2", 2, id);
         ext2_unlink(fs, ROOT_INO, "h2", 2);
     }

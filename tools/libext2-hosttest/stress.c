@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "ext2.h"
+#include "ext2io.h"
 #include "sb.h"
 #include "gdt.h"
 #include "obj.h"
@@ -115,19 +116,26 @@ int main(int argc, char **argv)
             if (off + len > MAXSZ) len = MAXSZ - off;
             unsigned char *b = malloc(len);
             for (size_t k = 0; k < len; k++) b[k] = (unsigned char)(rand());
-            if (ext2_write(fs, ino[i], (off_t)off, (const char *)b, len) == (ssize_t)len) {
+            if (ext2_pwrite(fs, ino[i], (off_t)off, (const char *)b, len) == (ssize_t)len) {
                 memcpy(model[i] + off, b, len);
                 if (off + len > modelLen[i]) modelLen[i] = off + len;
             }
             free(b);
         }
-        else if (action < 60) {                  /* append */
+        else if (action < 60) {                  /* append, as O_APPEND does it */
             size_t len = 1 + (size_t)(rand() % (int)(maxw * 2));
             if (modelLen[i] + len > MAXSZ) len = MAXSZ - modelLen[i];
             if (len == 0) continue;
             unsigned char *b = malloc(len);
             for (size_t k = 0; k < len; k++) b[k] = (unsigned char)(rand());
-            if (ext2_write(fs, ino[i], (off_t)modelLen[i], (const char *)b, len) == (ssize_t)len) {
+            /* O_APPEND writes at the end of the file whatever offset is passed
+             * (0 here), and reports the new end as the offset. */
+            off_t pos = 0;
+            if (ext2_write(fs, ino[i], &pos, (const char *)b, len, O_APPEND) == (ssize_t)len) {
+                if (pos != (off_t)(modelLen[i] + len)) {
+                    printf("  [FAIL] %s O_APPEND of %zu at size %zu reported offset %lld\n", nm, len, modelLen[i], (long long)pos);
+                    fails++;
+                }
                 memcpy(model[i] + modelLen[i], b, len);
                 modelLen[i] += len;
             }
