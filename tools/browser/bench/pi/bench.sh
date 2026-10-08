@@ -42,6 +42,12 @@
 #     env=NAME=VAL  an environment variable for the browser (repeatable), e.g.
 #                   env=JSC_jitMemoryReservationSize=67108864 (the JIT pool: 32 MiB on Phoenix)
 #                   or env=JSC_useDFGJIT=false / env=JSC_useFTLJIT=false (tier A/B)
+#     browser=B     wpe (default: /usr/bin/wpe-browser) or gtk (/usr/bin/webkit-browser, WebKitGTK:
+#                   a 1280x800 window, a private session; arms cpu, gpu, dmabuf, shm (WebKit's
+#                   WEBKIT_DMABUF_RENDERER_FORCE_SHM=1); no headless). Its runs are named
+#                   <bench>-<page>-<arm>-gtk-<nonce>
+#     stats=S       the browser's --present-stats=S (both browsers: the frames the view
+#                   presented every S s; webkit-browser also its paint watch, gtk-paint lines)
 #
 # Lines (the browser's own start "WPEB ", the pages' "BENCH <bench> <run> <seq> <kind> ..."):
 #   BENCH-SH begin|run|alive|end ...      this script; "alive" every 60 s names the last progress
@@ -50,7 +56,7 @@
 #   BENCH <bench> CRASHED run= reason= last=   the web process ended (web-process-terminated)
 #   BENCH <bench> EXITED run= rc= last=        the browser ended by itself before BENCH-DONE
 #   BENCH-SUM bench= page= arm= run= result=DONE|HUNG|CRASHED|EXITED secs= <the DONE title's fields>
-#             temp_mC=<before>/<after> throttled=<after>         one per run, and all again at the end
+#             temp_mC=<before>/<after> throttled=<after> browser=wpe|gtk   one per run, and all again at the end
 # Each run's full output is also in /usr/share/browser-bench/results/logs/<run>.log (the export:
 # the host reads it directly); the pages POST their full JSON to the server.
 #
@@ -81,7 +87,7 @@ if [ $# -gt 0 ] && [ "${1#*=}" = "$1" ]; then
 	ARMS=$1
 	shift
 fi
-ITER= BASE=http://10.42.0.1:8090 SERVER=host TIMEOUT= STALL=60 QUIET=0 HOLD_OPT=
+ITER= BASE=http://10.42.0.1:8090 SERVER=host TIMEOUT= STALL=60 QUIET=0 HOLD_OPT= KIND=wpe STATS=
 EXTRA_ENV=()
 for kv in "$@"; do
 	case "${kv}" in
@@ -93,9 +99,14 @@ for kv in "$@"; do
 		quiet=*) QUIET=${kv#quiet=} ;;
 		hold=*) HOLD_OPT=${kv#hold=} ;;
 		env=*=*) EXTRA_ENV+=("${kv#env=}") ;;
+		browser=wpe | browser=gtk) KIND=${kv#browser=} ;;
+		stats=*) STATS=${kv#stats=} ;;
 		*) echo "BENCH-SH bad option ${kv}"; exit 2 ;;
 	esac
 done
+if [ "${KIND}" = gtk ] && [ -z "${BENCH_BROWSER:-}" ]; then
+	BROWSER=/usr/bin/webkit-browser
+fi
 [ "${SERVER}" = pi ] && BASE=http://127.0.0.1:8090
 AB=$(tr '\n' ' ' < "${SUITE}/phx/jetstream-ab.list" 2>/dev/null)
 NONCE=${BENCH_NONCE:-r$(date +%H%M%S)x${RANDOM}}
@@ -196,6 +207,7 @@ last_line() {
 run_one() {
 	local bench=$1 page=$2 arm=$3 id url limit log pidf t0 next_beat status=HUNG secs extra=() envs=() rc done_kv temp0 reason last
 	id=${bench}-$(echo "${page}" | tr -c 'A-Za-z0-9.\n-' '_' | cut -c1-40)-${arm}-${NONCE}
+	[ "${KIND}" = gtk ] && id=${id%-"${NONCE}"}-gtk-${NONCE}
 	url=$(url_of "${page}" "${id}")
 	limit=$(limit_of "${page}" "${arm}")
 	log=${LOGS}/${id}.log
@@ -203,9 +215,16 @@ run_one() {
 	envs=("${EXTRA_ENV[@]}")
 	case "${arm}" in *nojit*) envs+=(JSC_useJIT=false) ;; esac
 	case "${arm}" in *cpu*) extra+=(--cpu-rendering) ;; esac
-	case "${arm}" in *shm*) extra+=(--shm) ;; *headless*) ;; *) extra+=(--dmabuf) ;; esac
-	case "${arm}" in *headless*) extra+=(--headless) ;; esac
-	extra+=(--size=1280x800 --toolbar=never --ephemeral --stall-secs="${STALL}" --hang-recovery=0)
+	if [ "${KIND}" = gtk ]; then
+		# webkit-browser (WebKitGTK): dma-buf frames whenever GDK has GL; shared memory on request
+		case "${arm}" in *shm*) envs+=(WEBKIT_DMABUF_RENDERER_FORCE_SHM=1) ;; esac
+		extra+=(--size=1280x800 --private)
+	else
+		case "${arm}" in *shm*) extra+=(--shm) ;; *headless*) ;; *) extra+=(--dmabuf) ;; esac
+		case "${arm}" in *headless*) extra+=(--headless) ;; esac
+		extra+=(--size=1280x800 --toolbar=never --ephemeral --stall-secs="${STALL}" --hang-recovery=0)
+	fi
+	[ -n "${STATS}" ] && extra+=(--present-stats="${STATS}")
 	temp0=$(thermal)
 	echo "BENCH-SH run id=${id} bench=${bench} page=${page} arm=${arm} limit_s=${limit} temp_mC=${temp0} url=${url}"
 	echo "BENCH-SH run id=${id} args=${extra[*]} env=${envs[*]:-none}" > "${log}"
@@ -273,7 +292,7 @@ run_one() {
 	BPID=
 	rm -f "${pidf}"
 	done_kv=$(grep -a -m1 -o "title BENCH-DONE ${bench} .*run=${id}" "${log}" | sed "s/^title BENCH-DONE ${bench} //; s/ run=${id}\$//")
-	echo "BENCH-SUM bench=${bench} page=${page} arm=${arm} run=${id} result=${status} secs=${secs} ${done_kv:-score=NaN} temp_mC=${temp0}/$(thermal) throttled=$(throttled)" |
+	echo "BENCH-SUM bench=${bench} page=${page} arm=${arm} run=${id} result=${status} secs=${secs} ${done_kv:-score=NaN} temp_mC=${temp0}/$(thermal) throttled=$(throttled) browser=${KIND}" |
 		tee -a "${LOGS}/summary-${NONCE}.txt"
 	pause 5
 }
@@ -282,6 +301,7 @@ run_all() {  # run_all <window|headless>: the runs of MODE x ARMS for that displ
 	local arm r bench page
 	for arm in ${ARMS//,/ }; do
 		case "${arm}" in *headless*) [ "$1" = headless ] || continue ;; *) [ "$1" = window ] || continue ;; esac
+		case "${KIND}-${arm}" in gtk-*headless*) echo "BENCH-SH skip arm=${arm}: webkit-browser has no headless display"; continue ;; esac
 		for r in $(runs_of "${MODE}"); do
 			bench=${r%%:*} page=${r#*:}
 			run_one "${bench}" "${page}" "${arm}"
@@ -306,7 +326,7 @@ if ! runs_of "${MODE}" > /dev/null; then
 	exit 2
 fi
 mkdir -p "${LOGS}"
-echo "BENCH-SH begin mode=${MODE} arms=${ARMS} nonce=${NONCE} base=${BASE} server=${SERVER} iter=${ITER:-default} stall=${STALL} env=${EXTRA_ENV[*]:-none} temp_mC=$(thermal) throttled=$(throttled) uptime=$(uptime 2>/dev/null | tr -s ' ')"
+echo "BENCH-SH begin mode=${MODE} arms=${ARMS} browser=${KIND} nonce=${NONCE} base=${BASE} server=${SERVER} iter=${ITER:-default} stall=${STALL} stats=${STATS:-none} env=${EXTRA_ENV[*]:-none} temp_mC=$(thermal) throttled=$(throttled) uptime=$(uptime 2>/dev/null | tr -s ' ')"
 echo "BENCH-SH versions $(head -n 1 "${SUITE}/VERSIONS.txt" | cut -c1-120)"
 if [ "${SERVER}" = pi ]; then
 	/bin/python3 "${SUITE}/tools/serve.py" --root "${SUITE}" --results "${SUITE}/results" --bind 127.0.0.1 --port 8090 &
