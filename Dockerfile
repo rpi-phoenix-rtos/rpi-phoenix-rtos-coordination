@@ -113,9 +113,15 @@ RUN PAK0_URL="${PAK0_URL}" PAK0_SHA256="${PAK0_SHA256}" \
     STK_ASSETS_URL="${STK_ASSETS_URL}" STK_ASSETS_SHA256="${STK_ASSETS_SHA256}" \
     ./scripts/stage-game-data.sh all
 
-# 4. Full SD-card image build.
-RUN ./scripts/rebuild-rpi4b-fast.sh --variant "${BUILD_VARIANT}" ${BUILD_FLAGS}
+# 4. Full SD-card image build. The SD image is copied to /release and the build tree is
+#    deleted IN THE SAME RUN, so the committed layer holds only the image: with the two
+#    WebKit ports the tree is over 100 GB, and a layer that kept it was exported and then
+#    unpacked again (2026-10-08: ~146 GB image + ~87 GB build cache filled a 468 GB disk).
+RUN ./scripts/rebuild-rpi4b-fast.sh --variant "${BUILD_VARIANT}" ${BUILD_FLAGS} \
+    && mkdir -p /release \
+    && cp -v artifacts/rpi4b/*.img /release/ \
+    && rm -rf .buildroot .toolchain sources artifacts
 
 # 5. Export: `docker run -v <hostdir>:/out phoenix-rpi` copies the image out.
 VOLUME /out
-CMD ["bash","-lc","mkdir -p /out && (cp -v artifacts/rpi4b/rpi4b-sd-2part.img /out/ 2>/dev/null || cp -v artifacts/rpi4b/*.img /out/) && sha256sum /out/*.img && echo 'Phoenix-RTOS SD image exported to ./out'"]
+CMD ["bash","-lc","mkdir -p /out && (cp -v /release/rpi4b-sd-2part.img /out/ 2>/dev/null || cp -v /release/*.img /out/) && sha256sum /out/*.img && echo 'Phoenix-RTOS SD image exported to ./out'"]
