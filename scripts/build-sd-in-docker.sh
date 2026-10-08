@@ -26,6 +26,9 @@ DOCKER="${DOCKER:-sudo docker}"
 PAK0_REL="sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/rootfs-overlay/usr/share/quake/id1/pak0.pak"
 
 mkdir -p "$OUT"
+# `docker run -v` reads a relative path as a named VOLUME and refuses it (after the whole
+# multi-hour build); make it absolute up front.
+OUT="$(cd "$OUT" && pwd)"
 
 # serve-repos-for-docker.sh serves each repo's .git dir, so the Docker build clones
 # the COMMITTED state and silently ignores every uncommitted edit in the working
