@@ -385,5 +385,5 @@ Then fast-forward/push each master, snapshot a manifest, and delete the
 - **Pushed:** all 12 masters to `publish` (fast-forward). Manifest
   `2026-10-08-upstream-sync-adopted`.
 - **Not done from the gate list:** the USB `dd`+`cmp` (step 5; nothing wrote `/dev/mmcblk0`), the
-  SSH/lighttpd check (step 9), `ps`/`top` on the new `threadinfo_t` beyond `ps` itself, and the
-  host harness re-runs (step 5 of the build list). Worth doing in the owner's manual round.
+  SSH/lighttpd check (step 9), and `ps`/`top` on the new `threadinfo_t` beyond `ps` itself. Worth doing in the owner's manual round.
+- **Host harnesses (step 5), done 2026-10-08 night:** libext2 adapted to the new `ext2_write` (offset by pointer + mode) and run ALL GREEN, plus the P28 test; libcache, the six libc harnesses, libm, posixsrv (+TSan) and usbmouse clean. No defect in the merged sibling code (coordination `2884f216c`).
