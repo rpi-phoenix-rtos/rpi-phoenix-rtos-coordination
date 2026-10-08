@@ -157,6 +157,27 @@ build. What G0 cannot rule out from the host: the later steps (EGL config, conte
 GDK's GL-composited window on our Mesa) — the `gdk-gl` line covers them, since it realizes a
 context on the browser window.
 
+**Build 66 did not carry that fix.** Its log has neither `WKGB gdk-gl` nor `egl-probe`: the
+image's `webkit-browser` was built from the round-1 launcher. The buildroot's copy
+`.buildroot/phoenix-rtos-ports/webkit_gtk/` still held build 65's files (01:58; `files/checks/`
+missing, `launcher/webkit-browser.cpp` and `port.def.sh` older) although ports master had the
+round-2 merge `15f696f` (03:25); `webkit_wpe`'s copy in the same tree had been refreshed at
+03:24. So G0 of build 66 re-ran the build-65 program.
+
+Round 3 (ports `ff4aa50`) makes a stale program visible and explains a failure from the first
+lines of the log, before GTK and WebKit start:
+
+- `WKGB … ui start … launcher=b10-r3` — the revision of the launcher in the binary; the port's
+  stage check fails the build without it.
+- `WKGB egl-early wayland=1 client_ext=platform_wayland,platform_surfaceless display=1
+  initialize=1 version=1.5 apis=… bind_es=1 bind_gl=… create_context_ext=1 configs=N
+  context_es3=1 context_es2=1 error=0x3000 vendor=Mesa Project` — every GL step of GDK 3 and
+  WebKit's check, on a Wayland connection of its own (host run against the host's Mesa: all 1).
+  Found on the way, by the host run: epoxy's own `eglGetPlatformDisplay()` aborts the program
+  ("No provider of eglGetPlatformDisplay found") while no EGL display is current, because
+  epoxy assumes EGL 1.4 then; the probes take the platform entry point through
+  `eglGetProcAddress()`, as GDK does (round 2's `egl-probe` would have hit this abort).
+
 ### 3.2 The rest
 
 | Area | GTK 2.54 needs | Phoenix answer |
@@ -310,14 +331,14 @@ line), `webkit-browser` started from the XFCE menu entry or `webkit-browser URL`
 | G6 | numbers | painted fps of G5's 1080p30 HEVC and MotionMark-quick, next to `wpe-browser` on the same image |
 | G7 | HDMI shot | one frame with two tabs and the downloads bar, kept as `docs/browser/b10-webkitgtk.png` |
 
-### 9.1 Commands (build with ports `d15e17a` or later, USE checks)
+### 9.1 Commands (build with ports `ff4aa50` or later, USE checks)
 
 Run in foot inside the XFCE session (or from the autostart gate script); every line the program
 prints starts with `WKGB `, the pages' `console.log` goes to stdout too.
 
 | # | Command | Grade on |
 |---|---|---|
-| G0 | `webkit-browser https://en.wikipedia.org/wiki/Raspberry_Pi` | `WKGB gdk-gl ok use_es=1`, no `Disabled hardware acceleration`, `WPEB-WEBKIT swap-chain … type=texture-dmabuf`. If `gdk-gl failed`: the `egl-probe` line names the step |
+| G0 | `webkit-browser https://en.wikipedia.org/wiki/Raspberry_Pi` | `ui start … launcher=b10-r3` (else the binary is stale), `egl-early … initialize=1 … bind_es=1 … context_es3=1` (or `context_es2=1`), no `Disabled hardware acceleration`, `WKGB gdk-gl ok use_es=1`, `WPEB-WEBKIT swap-chain … type=texture-dmabuf`. If `gdk-gl failed`: the `egl-early`/`egl-probe` fields name the step |
 | G1 | (same) | window on HDMI, `load finished … title=Raspberry Pi - Wikipedia` |
 | G2 | `webkit-browser --tab-cycle=10 file:///usr/share/webkit-browser/start.html https://en.wikipedia.org/wiki/Raspberry_Pi` | two `load finished`, `tab switch page=2/2 …` / `1/2` alternating, HDMI shows the page named. Ctrl+T/Ctrl+W need a keyboard: by hand |
 | G3 | `webkit-browser 'file:///usr/share/webkit-browser/checks/b10.html?download=1'` | `download started`, `download destination $HOME/Downloads/b10-download.bin` (build 65 session: `HOME=/tmp/xfce-session-home`), `download finished … received=1048576`; `sha256sum` of that file = `06b7bbfb7824aa03382051691630eb26de85102d1b08a81e907ec0744cd8a286`; the downloads bar on HDMI. Over HTTP: `--download=http://10.42.0.1:8091/<file>` on any page |
