@@ -33,12 +33,21 @@ def frames(path, w=480, h=270, fps=2):
     return np.frombuffer(b, np.uint8)[:n*w*h*3].reshape(n, h, w, 3).astype(np.float32), fps
 
 def segments(script):
+    """(caption prefix, length) per segment line "<clip>|<start>|<length s>|<label>".
+
+    The lines of a reel script's segments=() table (quoted), or of a plain segments file
+    (make-browser-reel.sh's BROWSER_REEL_SEGMENTS, quotes optional). A line counts when its third
+    field is a whole number of seconds; anything else (comments, code) is not a segment.
+    """
     out = []
     for line in open(script):
         s = line.strip()
-        if s.startswith('"2026') and s.count("|") >= 3:
-            clip, start, ln, label = s.strip('"').split("|", 3)
-            out.append((label.split("—")[0].strip(), int(ln)))
+        if s.startswith("#") or s.count("|") < 3:
+            continue
+        clip, start, ln, label = s.strip('"').split("|", 3)
+        if not ln.isdigit() or not clip or " " in clip:
+            continue
+        out.append((label.split("—")[0].strip(), int(ln)))
     return out
 
 # Where make-demo-reel.sh draws the caption: a 64 px band whose BOTTOM edge sits
@@ -119,7 +128,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("reel")
     ap.add_argument("--segments", default="scripts/make-demo-reel.sh")
+    ap.add_argument("--static-ok", default="",
+                    help="more caption prefixes (comma-separated) whose segments may be still, "
+                         "e.g. 'WPE WebKit,WebKitGTK' for web pages between keystrokes")
     a = ap.parse_args()
+    static_ok = STATIC_OK + tuple(p.strip() for p in a.static_ok.split(",") if p.strip())
 
     segs = segments(a.segments)
     # ⚠ Zero segments graded as PASS until 2026-09-17: an empty list runs no
@@ -159,7 +172,7 @@ def main():
         v = []
         if flat < 1.5 and lum < 12: v.append("DEAD SIGNAL")
         elif lum < 6:               v.append("DARK")
-        if still > 60 and not name.startswith(STATIC_OK): v.append("FROZEN")
+        if still > 60 and not name.startswith(static_ok): v.append("FROZEN")
         bad += len(v)
         print(f"{name:14s} {t:4.0f}-{t+L:4.0f}s {lum:6.1f} {cols:8d} "
               f"{mo.mean():7.2f} {still:6.0f}%  {'; '.join(v) if v else 'ok'}")
