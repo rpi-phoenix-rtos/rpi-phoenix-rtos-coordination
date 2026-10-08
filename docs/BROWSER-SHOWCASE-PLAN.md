@@ -112,7 +112,23 @@ Each scene is **two psh commands**, as in the main reel:
 The `export` prints nothing, so it costs the full 60 s idle window.
 
 **Record time** = boot (~75 s) + the clock-step wait (~0–15 s) + 8 + `export` (~62) + 8 + session
-start (~20) + `HOLD` + logout (~15). The Bash `timeout` is `(secs + 80) × 1000`.
+start (~20) + `HOLD` + logout (~15) + **30 s of margin**. The margin costs only disk (~5 MB per
+30 s). The Bash `timeout` is `(secs + 80) × 1000`.
+
+**`HOLD`** counts from the panel. It covers:
+
+- the 5 s autostart delay;
+- the items;
+- for every item closed by its time, the browser's exit after SIGTERM. That can take up to
+  ~10 s (WebKit's children end on their own watchdogs) and delays the next item.
+
+**The clock step.** `psh-interact.py` sends the first command only after the Pi's clock step
+(`System time set to`), waiting up to 150 s. The step normally arrives during the boot. A cycle
+log with `clock step not seen in 150s` means: re-record.
+
+**Long commands.** A command longer than 128 characters (S3's `export`) makes `psh-interact.py`
+print its legacy-CMDSZ warning. Current psh takes 1024 characters, so the warning is harmless;
+`scene.sh video` avoids it.
 
 **One-command form.** Each scene also runs as one command,
 `/bin/bash /usr/share/browser-showcase/scene.sh <scene>`. It sets the same three variables and
@@ -134,12 +150,13 @@ Both must hold:
 ### S1 — WPE WebKit: three popular sites (clip `bshow-sites`, reel ~100 s)
 
 ```
-REC_IDLE_SECS=60 REC_MAX_CMD_SECS=240 ./scripts/record-showcase-clip.sh bshow-sites 360 \
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=240 ./scripts/record-showcase-clip.sh bshow-sites 380 \
     "export THUNAR_START=0 HOLD=140 XFCE_AUTOSTART=/bin/bash=/usr/share/browser-showcase/wpe-sites.sh:120" \
     "/bin/bash /bin/xfce-session"
 ```
 
-Bash `timeout`: **440000** ms.
+Bash `timeout`: **460000** ms. One-command form: `"/bin/bash /usr/share/browser-showcase/scene.sh sites"`
+with 310 s and 390000 ms.
 
 **On screen**, in a 1600×900 window on the XFCE desktop. The times count from the browser's
 start and are printed in the `BSHOW item=sites` line:
@@ -179,12 +196,12 @@ start and are printed in the `BSHOW item=sites` line:
 ### S2 — WebGL and GPU compositing (clip `bshow-gpu`, reel ~30 s)
 
 ```
-REC_IDLE_SECS=60 REC_MAX_CMD_SECS=180 ./scripts/record-showcase-clip.sh bshow-gpu 300 \
-    "export THUNAR_START=0 HOLD=90 XFCE_AUTOSTART=/bin/bash=/usr/share/browser-showcase/wpe-gpu.sh:70" \
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=200 ./scripts/record-showcase-clip.sh bshow-gpu 340 \
+    "export THUNAR_START=0 HOLD=100 XFCE_AUTOSTART=/bin/bash=/usr/share/browser-showcase/wpe-gpu.sh:70" \
     "/bin/bash /bin/xfce-session"
 ```
 
-Bash `timeout`: **380000** ms.
+Bash `timeout`: **420000** ms. One-command form: `scene.sh gpu`, 270 s, 350000 ms.
 
 **On screen:** `gpu.html` in a 1600×900 window.
 
@@ -224,12 +241,12 @@ Use `b7-anim.html` for the composited layers.
 ### S3 — HEVC 1080p on the hardware decoder (clip `bshow-video`, reel ~50 s)
 
 ```
-REC_IDLE_SECS=60 REC_MAX_CMD_SECS=220 ./scripts/record-showcase-clip.sh bshow-video 360 \
-    "export THUNAR_START=0 HOLD=130 XFCE_AUTOSTART=/bin/bash=/usr/share/browser-showcase/wpe-hls.sh:55,/bin/bash=/usr/share/browser-showcase/wpe-demo.sh:55" \
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=250 ./scripts/record-showcase-clip.sh bshow-video 390 \
+    "export THUNAR_START=0 HOLD=150 XFCE_AUTOSTART=/bin/bash=/usr/share/browser-showcase/wpe-hls.sh:55,/bin/bash=/usr/share/browser-showcase/wpe-demo.sh:55" \
     "/bin/bash /bin/xfce-session"
 ```
 
-Bash `timeout`: **440000** ms.
+Bash `timeout`: **470000** ms. One-command form: `scene.sh video`, 320 s, 400000 ms.
 
 **On screen:** two items, each in a 1280×960 window. The pages fix the `<video>` at 960×540.
 
@@ -263,12 +280,12 @@ bshow-hls` names the variant directory fetched (`hevc-1080`).
 **Optional, MSE** (clip `bshow-mse`; it adds one more cycle):
 
 ```
-REC_IDLE_SECS=60 REC_MAX_CMD_SECS=170 ./scripts/record-showcase-clip.sh bshow-mse 300 \
-    "export THUNAR_START=0 HOLD=75 XFCE_AUTOSTART=/bin/bash=/usr/share/browser-showcase/wpe-mse.sh:60" \
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=185 ./scripts/record-showcase-clip.sh bshow-mse 320 \
+    "export THUNAR_START=0 HOLD=85 XFCE_AUTOSTART=/bin/bash=/usr/share/browser-showcase/wpe-mse.sh:60" \
     "/bin/bash /bin/xfce-session"
 ```
 
-Bash `timeout`: 380000 ms.
+Bash `timeout`: 400000 ms.
 
 - hls.js runs over Media Source Extensions, on the same ladder.
 - Its adaptive bitrate starts low and climbs, so the burned-in label changes on screen up to
@@ -279,12 +296,12 @@ Bash `timeout`: 380000 ms.
 ### S4 — WebKitGTK: tabs and a download (clip `bshow-gtk`, reel ~50 s)
 
 ```
-REC_IDLE_SECS=60 REC_MAX_CMD_SECS=190 ./scripts/record-showcase-clip.sh bshow-gtk 330 \
-    "export THUNAR_START=0 HOLD=100 XFCE_AUTOSTART=/bin/bash=/usr/share/browser-showcase/gtk-tabs.sh:80" \
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=210 ./scripts/record-showcase-clip.sh bshow-gtk 350 \
+    "export THUNAR_START=0 HOLD=110 XFCE_AUTOSTART=/bin/bash=/usr/share/browser-showcase/gtk-tabs.sh:80" \
     "/bin/bash /bin/xfce-session"
 ```
 
-Bash `timeout`: **410000** ms.
+Bash `timeout`: **430000** ms. One-command form: `scene.sh gtk`, 280 s, 360000 ms.
 
 **On screen:** WebKitGTK's MiniBrowser window with three tabs, all of which loaded cleanly in
 the site survey:
@@ -327,13 +344,13 @@ The launcher calls WebKit's standard `webkit_web_view_download_uri()`.
 
 ```
 ./scripts/test-cycle-psh-interact.sh --label bshow-rehearsal --wait-secs 220 --inter-cmd-secs 8 \
-    --idle-secs 60 --max-cmd-secs 540 -- "/bin/bash /usr/share/browser-showcase/scene.sh all"
+    --idle-secs 60 --max-cmd-secs 600 -- "/bin/bash /usr/share/browser-showcase/scene.sh all"
 ```
 
-Run it with `run_in_background: true` and a Bash `timeout` of **900000** ms. Boot, the 420 s
-session and the 60 s idle tail come to ~10.5 min, past the 600000 ms foreground cap.
+Run it with `run_in_background: true` and a Bash `timeout` of **1000000** ms. Boot, the 480 s
+session and the 60 s idle tail come to ~11–14 min, past the 600000 ms foreground cap.
 
-- `scene.sh all` runs S1, S2, S3 and S4 in one session (`HOLD` 420 s), so it fits one cycle.
+- `scene.sh all` runs S1, S2, S3 and S4 in one session (`HOLD` 480 s), so it fits one cycle.
 - It warms both disk caches.
 - Grade it with the lines of §3. `python3 scripts/browser-reel-events.py` needs a recording to
   measure against, but the `BSHOW`, `WPEB` and `WKGB` lines grade the same.
@@ -355,9 +372,15 @@ Run this from the main checkout, where `artifacts/` is, after the four clips are
   `*-<label>.mp4`) and starts by anchors.
   - Once the reel is final, **pin the basenames**, so that a later re-record does not change it.
   - Measure the Boot segment's numeric start on the frame: `ffmpeg -ss <t> -i <clip> -frames:v 1 /tmp/f.png`.
-- **Check one anchor per clip on a frame.** The Wikipedia page appearing at `@sites.load1` is a
-  good one. If all the anchors of a clip are off by the same amount, pass
-  `BROWSER_REEL_LAG=<s>`; the default is 1.0.
+- **Calibrate on an in-browser anchor, never on `<item>.start`.** For example, compare
+  `@sites.load1` with the frame where Wikipedia appears, or `@gtk.load1` with the first tab
+  rendering.
+  - The `.start` anchors are the least precise. Between the `BSHOW` epoch and the browser's
+    `t=0` lie bash, `/bin/browser` and the exec of a 121 MB static ELF over NFS. That gap has
+    not been measured, and it is longer for a session's first browser.
+  - If a clip's in-browser anchors are all off by the same amount, pass `BROWSER_REEL_LAG=<s>`;
+    the default is 1.0.
+  - Segments that start at `.start` (2, 5 and 8) have a few seconds of slack at their start.
 - **Expected `verify` notes:**
   - The site and WebKitGTK segments are static between keystrokes, hence `--static-ok`. The GPU
     and video segments must move.
