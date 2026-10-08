@@ -116,3 +116,61 @@ host). Coexistence with the networks on ch 4 and 8 may narrow it back to 20 MHz.
 
 - If 5 GHz comes in low, the AP's 3 dBm txpower may be the cap; `iw dev wlp3s0 set txpower
   auto` would lift it, but that is a host radio change to note in the log.
+
+## Second lever: several frames per IPC (branches `wifi-f1-batch`)
+
+- **Branches** (pushed to `publish`):
+  - devices `2d0354e`, on top of `wifi-f1-agg`;
+  - lwip `6cbcc8f`, on top of master `6ae263b`.
+- **Host test:** `tools/wifi-batch-hosttest` (`make run DEVICES=<wt> LWIP=<wt>`) passes.
+
+**Data path today:**
+
+- **TX** is one `write()` per frame, from a buffer that is not page-aligned, so the kernel
+  copies a page every time. The tcpip thread blocks for the whole round trip.
+- **RX** is ~1.3 IPCs per frame: one `read()` per frame, an empty read at the end of each
+  drain, and one `/dev/wifiirq` read per wake.
+
+**Batch path:**
+
+- A new device `/dev/wifibatch`; `/dev/wifidata` stays as the control arm.
+- **TX:** a netif TX thread sends up to 16 frames or 24 KB per message. The daemon applies
+  the same per-frame credit check, takes what it can and returns the count; the netif
+  re-sends the rest every 200 µs for up to 100 ms. `linkoutput` waits at most 20 ms on a
+  full queue, then returns `ERR_IF`, so a shut credit window cannot stall genet/NFS.
+- **RX:** one read returns everything queued (≤32 frames or 24 KB), with a `DRAINED` flag
+  that saves the confirming empty read.
+- **Buffers:** page-aligned `mmap` buffers.
+- **Knob:** daemon `batch=1` or `wifi batch 0|1`, **default 0**. The netif follows it from
+  its 3 s status poll and prints `lwip: wifi43455: frames now go several|one per message`.
+- **Counters:**
+  - `WIFISTATS batch` (batch-path messages and frames each way, plus `tx_partial` and
+    `rx_capped`);
+  - `WIFISTATS ipc`: frames per request each way, **reset at every `wifi stats`**, so
+    stats → transfer → stats needs no subtraction.
+
+**Build gate:** `--scope core` with both branches merged, then `strings -a`:
+
+- `rpi4-wifi` contains `WIFISTATS ipc` and `wifibatch`;
+- `wifi` contains `batch [0|1]`;
+- the lwip binary contains `frames now go`.
+
+**Arms**, same boot, psh: A = `batch 0`; B = `wifi batch 1`, wait ≥3 s for the UART line;
+A′ = `wifi batch 0`. Each arm runs `wifi status`, `wifi stats`,
+`python3 /root/wifi-perf.py 10.43.0.1 7777 <ip> 16777216 3`, `wifi stats`.
+
+**Expected:**
+
+- RX +20–40 % (Pi-bound).
+- TX about flat at HT20 (air-bound); a TX gain needs the 5 GHz arm as well.
+- If frames per request rises but throughput does not, the next bound is lwip `TCP_WND`
+  (8–12 MiB/s).
+
+**Risks:**
+
+- a batch read holds the message thread for up to 32 frames;
+- more `blocked` and `tx_partial` when credits run out mid-batch;
+- bus errors become real drops instead of `ERR_IF` retries;
+- one reorder at each switch;
+- empty polls cost more in poll mode;
+- no SDPCM TX glom yet.
