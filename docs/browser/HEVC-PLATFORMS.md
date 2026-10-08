@@ -140,7 +140,7 @@ serve it) **30.0 fps presented, 97.5 % painted**, 7 frames dropped at start.
 **Pi rehearsal of a PeerTube watch page** (build 56, 2026-10-07): `https://peertube.gravitywell.xyz/w/7tXP3FCq7b6oLDH7QnzVYM`
 (third-party, test only) loads in 7.2 s, **autoplays** in the site's own player (web-video mode),
 and the `hvc1` 1080x1920 59.94 fps upload decodes on the rpivid block: 60 fps presented, ~39 fps
-painted, 43 dropped of 3603, played to its end — with `--autoplay=allow`. **With `/bin/browser`'s
+painted, 43 dropped of 3603, played to its end — with `--autoplay=allow`. **Build 68 (zero-copy frames by default): ~54 fps painted** (3265 painted of 3736 presented in 60.6 s, 7 dropped), every picture drawn straight from the decoder's GPU buffer. **With `/bin/browser`'s
 defaults** (WebKit's policy: autoplay only without sound, as Chrome and Safari) the same page
 (`demo-browser` cycle, XFCE session) shows the first picture, decoded on the block, and waits:
 the demo is **one click on play** (or `WPE_BROWSER_AUTOPLAY=allow` before `browser`).
