@@ -1,6 +1,6 @@
 # Upstream sync 2026-10-08 (redo of 10-07 on top of builds 49–68)
 
-**Status: MERGED ON BRANCHES, NOT BUILT, NOT GATED.** Every repo with incoming
+**Status: ✅ ADOPTED 2026-10-08** (masters fast-forwarded, built, Pi-gated and pushed to `publish`; see the Adoption log at the end). *Was: merged on branches, not built, not gated.* Every repo with incoming
 commits has a branch `upstream-sync-2026-10-08` in a worktree
 `/home/houp/.claude/jobs/c8f1289c/tmp/wt-us8-<repo>`. No `master` in `sources/` was
 touched, nothing was pushed, no image was built, no Pi cycle was run.
@@ -359,3 +359,31 @@ Then fast-forward/push each master, snapshot a manifest, and delete the
     `USE_STRUCT_TM_TM_ZONE`, `HAVE_EXECINFO_H`.
   - `_SC_NPROCESSORS_ONLN` is 27 in the new sysroot. The Pi gate's
     `std::thread::hardware_concurrency() == 4` check proves libstdc++ took it.
+- **2026-10-08 13:50 — adoption build** (`--scope full-clean --with-tests --with-ports --with-showcase`).
+  - Core proofs: `proc_cpuTime` is in the kernel; `sys_cpuTime`, `pthread_getcpuclockid` and
+    `sem_clockwait` are in libphoenix; `fegetround` comes from `fenv.o` only.
+  - The ports stage failed at `quakespasm_drm`: its glue's `pthread_getcpuclockid` stand-in clashed
+    with the new real one. Dropped it (ports `59de7e5`). None of the other 17 new libphoenix symbols
+    is defined by any port.
+  - Resumed with `--scope core`. One resume was killed at the 2 h tool limit; the next was relaunched
+    detached and passed (rc=0). posixsrv's `semaphore init` is in `loader.disk`.
+- **Census:** 0 stale binaries of 412 in the build root. 14 hand-built probes left on the NFS export
+  were moved to `/root/quarantine-pre-sync-20261008/`.
+- **Pi gate:**
+
+  | Phase | Result |
+  |---|---|
+  | `sync8a`: libc + kernel test programs | 22/23 clean |
+  | `hwconc`: CPU count | `cxx=4 c=4` |
+  | `sync8b2`: write/append/O_CREAT (incl. directory times)/8 MB cp+cmp/16 MB append/FIFO/pipeline/`mktemp` 0600/dates, on NFS and `/tmp` | all ok |
+  | `sync8c2`: exec-overwrite | ok |
+  | showcase | 7/7, rc 0, 0 faults; HDMI checked for X, Quake 3, SuperTuxKart and XFCE |
+  | browser bench smoke | Speedometer 1.270, JetStream-ab 78.7 (16/16), Acid3 96, css3test 70 %, 0 faults |
+
+  The 23rd test program failed on `rusage_times.c:93`, a stale test: `times()` now reports real CPU
+  time. Rewritten in tests `57f2389`, which is not yet built into an image.
+- **Pushed:** all 12 masters to `publish` (fast-forward). Manifest
+  `2026-10-08-upstream-sync-adopted`.
+- **Not done from the gate list:** the USB `dd`+`cmp` (step 5; nothing wrote `/dev/mmcblk0`), the
+  SSH/lighttpd check (step 9), `ps`/`top` on the new `threadinfo_t` beyond `ps` itself, and the
+  host harness re-runs (step 5 of the build list). Worth doing in the owner's manual round.

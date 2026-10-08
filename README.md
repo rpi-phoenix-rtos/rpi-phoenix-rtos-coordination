@@ -49,6 +49,9 @@ Programs on the image:
 > is built with it and verified on the hardware. The authoritative release gate is a Docker
 > `--no-cache` clean build from the org Dockerfile, which produces `BUILD_RC=0` from a blank
 > OS. Details are in the [gcc-16 release plan](docs/done/gcc16-release-plan.md).
+>
+> 🔄 **In sync with upstream Phoenix-RTOS as of 2026-10-08** (all 12 repositories with upstream
+> changes merged, rebuilt from scratch and gated on the hardware; [notes](docs/misc/2026-10-08-upstream-sync.md)).
 
 ## Quick start
 

@@ -212,6 +212,42 @@ call `libtty_acquire()` on open; `pl011-tty` is this fork's, so it needed the sa
 `tcsetpgrp()` fails with `ENOTTY`. The fork's own `TIOCSPGRP` deviation (store the requested process
 group directly) is gone: upstream libtty now does the same, with session checks.
 
+**Same class again, 2026-10-08: upstream's CPU-time syscall and `sysconf()` renumbering.** The
+upstream sync of that day (12 repositories; [notes](misc/2026-10-08-upstream-sync.md), manifest
+`2026-10-08-upstream-sync-adopted`) appends `sys_cpuTime`, so the fork's eight appended syscalls
+move by one. It also renumbers every `_SC_*` key (`_SC_NPROCESSORS_ONLN` 102 → 27) and changes the
+`threadinfo_t`, `sem_t` and `semaphore_t` layouts. That made three things necessary:
+
+- a `--scope full-clean` rebuild;
+- a **from-scratch toolchain rebuild**, because `libstdc++.a` has the `_SC_*` values compiled in and
+  `std::thread::hardware_concurrency()` would otherwise query a key that no longer exists;
+- a census of stale binaries.
+
+Upstream also changed the write-offset and `O_CREAT` contract between the kernel and every
+filesystem server without a textual conflict: `write()` now takes the new offset from the server's
+reply. The fork's NFS server was adapted to it, and the other servers were checked.
+
+Conflicts were resolved as follows:
+
+- `posix_died()` stays where build 51 moved it (after the address space is freed), called with
+  upstream's new CPU-time arguments.
+- `sem_clockwait()` uses upstream's message format with the fork's implementation.
+- Upstream's `fe*` stubs were **not** taken, because they would silently shadow the real aarch64
+  `fenv`.
+- Upstream's posixsrv unit test was adapted to the fork's timed-request code.
+
+Gated on the Pi:
+
+- the libc and kernel test programs;
+- a C/C++ CPU-count probe (4 from both);
+- the write/append/`O_CREAT`/FIFO/exec-overwrite contract on NFS and on dummyfs `/tmp`;
+- the showcase, 7 of 7;
+- the browser benchmarks, with no regression.
+
+Two fork-side follow-ups came out of it. QuakeSpasm's glue defined its own `pthread_getcpuclockid`,
+which now collides with libphoenix's. A libc test pinned `times()` to zero CPU time, which upstream
+now reports for real.
+
 **libphoenix allocator, further hardening (2026-09-09).** Beyond the coalesce-neighbour validation
 noted above: `free()` now checks that a chunk's `heap` pointer lies inside the window of heaps the
 allocator has actually `mmap`'d, and free-bin links are **value-checked before `LIST_REMOVE`
