@@ -18,12 +18,27 @@
 #   gtk-p60     webkit-browser, the PeerTube HEVC 1080x1920 59.94 fps file (b8.html, local file)
 #   wpe-p60     wpe-browser, the same
 #   gtk-hls30-g6  gtk-hls30 at webkit-browser's default window (1280x960: the G6 run's condition)
-#   presets: video = gtk-hls30,wpe-hls30,gtk-p60,wpe-p60 (default; hold 470 s, one Pi cycle)
-#            all   = video + gtk-hls30-g6
+#   <gtk arm>-ahead          the same with webkit-browser --frame-ahead (step 2, WebKit patch
+#                            webkit-gtk/0106: FrameDone when a frame is received, the web process
+#                            renders frame N+1 while GTK paints frame N), e.g. gtk-p60-ahead
+#   <gtk arm>-opaque         ... --opaque-frames (step 3, webkit-gtk/0107: an opaque view's frames
+#                            imported as XB24, GDK skips the upload + blend of the window below)
+#   <gtk arm>-ahead-opaque   both
+#   presets: video  = gtk-hls30,wpe-hls30,gtk-p60,wpe-p60 (default; hold 470 s, one Pi cycle)
+#            ahead  = gtk-hls30,gtk-hls30-ahead,gtk-p60,gtk-p60-ahead (step 2's A/B, one boot)
+#            opaque = gtk-p60,gtk-p60-opaque,gtk-p60-ahead,gtk-p60-ahead-opaque (step 3's A/B)
+#            all    = video + gtk-hls30-g6 + gtk-hls30-ahead,gtk-p60-ahead,gtk-p60-opaque,
+#                     gtk-p60-ahead-opaque
+#   (an image with ports branch gtk-frame-overlap: launcher b10-r5; the -ahead/-opaque arms log
+#   "WPEB-WEBKIT frame-pacing ... ahead=1 opaque=0|1", the others ahead=0 opaque=0)
 # key=value: base=URL (the media server, default http://10.42.0.1:8091)  size=WxH (default 1280x800)
 #            secs=S (each arm, default 75: start-up + the 60 s clips)  stats=S (default 5)
 #            trace=N@T (webkit-browser's per-frame lines: N frames from T s; default 150@30,
 #            for the p60 arms 180@30)  hold=S (the session's limit)
+#
+# MotionMark (its own XFCE session, so not an arm here; bench.sh's gtk arms take the same flags,
+# "ahead" -> --frame-ahead, "opaque" -> --opaque-frames, and name the run after the arm):
+#     /bin/bash /usr/share/browser-bench/bench.sh motionmark-quick gpu,gpu-ahead,gpu-opaque,gpu-ahead-opaque browser=gtk stats=5
 #
 # Lines: ours "GFW ...", the browsers' "WKGB ..." (webkit-browser: present-stats, gtk-paint,
 # frame-watch-ui, frame-watch-web, frame) and "WPEB ..." (wpe-browser: present), the media
@@ -51,7 +66,9 @@ ARMS=${1:-video}
 [ $# -gt 0 ] && shift
 case "${ARMS}" in
 	video) ARMS=gtk-hls30,wpe-hls30,gtk-p60,wpe-p60 ;;
-	all) ARMS=gtk-hls30,wpe-hls30,gtk-p60,wpe-p60,gtk-hls30-g6 ;;
+	ahead) ARMS=gtk-hls30,gtk-hls30-ahead,gtk-p60,gtk-p60-ahead ;;
+	opaque) ARMS=gtk-p60,gtk-p60-opaque,gtk-p60-ahead,gtk-p60-ahead-opaque ;;
+	all) ARMS=gtk-hls30,wpe-hls30,gtk-p60,wpe-p60,gtk-hls30-g6,gtk-hls30-ahead,gtk-p60-ahead,gtk-p60-opaque,gtk-p60-ahead-opaque ;;
 esac
 BASE=http://10.42.0.1:8091
 SIZE=1280x800
@@ -76,13 +93,17 @@ P60CLIP=/usr/share/video-demo/rpivid-check/real-peertube-1080.mp4
 P60="file:///usr/share/wpe-browser/b8.html?src=file://${P60CLIP}"
 
 spec() {  # spec <arm>: sets CMD (the browser and its words), SECS
-	local trace=${TRACE:-150@30}
+	local trace=${TRACE:-150@30} base=$1 flags=()
 	SECS=${SECS_DEFAULT}
-	case "$1" in
-		gtk-hls30) CMD=("${GTK}" --autoplay=allow --size="${SIZE}" --present-stats="${STATS}" --frame-trace="${trace}" "${HLS30}&run=$1") ;;
-		gtk-hls30-g6) CMD=("${GTK}" --autoplay=allow --present-stats="${STATS}" --frame-trace="${trace}" "${HLS30}&run=$1") ;;
+	# webkit-browser's pacing flags, from the arm's suffixes (gtk arms only)
+	case "${base}" in *-opaque) flags=(--opaque-frames); base=${base%-opaque} ;; esac
+	case "${base}" in *-ahead) flags=(--frame-ahead "${flags[@]}"); base=${base%-ahead} ;; esac
+	case "${base}" in wpe-*) [ "${#flags[@]}" = 0 ] || return 1 ;; esac
+	case "${base}" in
+		gtk-hls30) CMD=("${GTK}" --autoplay=allow --size="${SIZE}" --present-stats="${STATS}" --frame-trace="${trace}" "${flags[@]}" "${HLS30}&run=$1") ;;
+		gtk-hls30-g6) CMD=("${GTK}" --autoplay=allow --present-stats="${STATS}" --frame-trace="${trace}" "${flags[@]}" "${HLS30}&run=$1") ;;
 		wpe-hls30) CMD=("${WPE}" --autoplay=allow --size="${SIZE}" --present-stats="${STATS}" "${HLS30}&run=$1") ;;
-		gtk-p60) CMD=("${GTK}" --autoplay=allow --size="${SIZE}" --present-stats="${STATS}" --frame-trace="${TRACE:-180@30}" "${P60}") ;;
+		gtk-p60) CMD=("${GTK}" --autoplay=allow --size="${SIZE}" --present-stats="${STATS}" --frame-trace="${TRACE:-180@30}" "${flags[@]}" "${P60}") ;;
 		wpe-p60) CMD=("${WPE}" --autoplay=allow --size="${SIZE}" --present-stats="${STATS}" "${P60}") ;;
 		*) return 1 ;;
 	esac

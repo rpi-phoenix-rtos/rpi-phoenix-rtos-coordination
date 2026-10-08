@@ -28,6 +28,9 @@
 #                   before then with the bare arm "jit" were CPU raster + shared memory.
 #     headless      WPEPlatform's headless display, no session (no console lines: titles only;
 #                   MotionMark is not valid headless)
+#     ahead | opaque  browser=gtk only: webkit-browser --frame-ahead (the web process renders the
+#                   next frame while GTK paints this one) | --opaque-frames (an opaque view's
+#                   frames drawn without alpha); e.g. gpu,gpu-ahead,gpu-ahead-opaque
 #     combined with "-": e.g. jit,nojit  or  jit-cpu-shm,jit-gpu-dmabuf
 #   key=value
 #     iter=N        Speedometer iterations (speedometer1: 1, speedometer: 10)
@@ -218,6 +221,8 @@ run_one() {
 	if [ "${KIND}" = gtk ]; then
 		# webkit-browser (WebKitGTK): dma-buf frames whenever GDK has GL; shared memory on request
 		case "${arm}" in *shm*) envs+=(WEBKIT_DMABUF_RENDERER_FORCE_SHM=1) ;; esac
+		case "${arm}" in *ahead*) extra+=(--frame-ahead) ;; esac
+		case "${arm}" in *opaque*) extra+=(--opaque-frames) ;; esac
 		extra+=(--size=1280x800 --private)
 	else
 		case "${arm}" in *shm*) extra+=(--shm) ;; *headless*) ;; *) extra+=(--dmabuf) ;; esac

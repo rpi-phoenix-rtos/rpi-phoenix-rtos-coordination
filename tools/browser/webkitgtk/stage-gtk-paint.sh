@@ -6,8 +6,9 @@
 #
 #   <export>/usr/share/gate/gtk-paint.sh          the runner (pi/gtk-paint.sh)
 #   <export>/usr/share/browser-bench/bench.sh     the benchmark suite's runner (browser=gtk, stats=S)
-# and checks what the gate needs: an image whose webkit-browser has the paint watch (ports branch
-# gtk-frame-watch: launcher b10-r4, WebKit patch webkit-gtk/0105), the 1080p60 clip, b8.html, the
+# and checks what the gate needs: an image whose webkit-browser has the paint watch and the pacing
+# flags (ports branch gtk-frame-overlap: launcher b10-r5, WebKit patches webkit-gtk/0105-0107:
+# --frame-ahead, --opaque-frames), the 1080p60 clip, b8.html, the
 # media server for the HLS page. Default export: the live one, /srv/phoenix-rpi4-nfs-gcc16.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -49,8 +50,9 @@ check_strings() {  # check_strings <binary> <string...>
 		fi
 	done
 }
-check_strings "${export_root}/usr/bin/webkit-browser" 'b10-r4' 'gtk-paint %s' 'frame-watch-web pid=%d' 'frame-watch-ui %s' \
-	'WPEB-WEBKIT gtk-paint import pid=%d' 'frame-trace'
+check_strings "${export_root}/usr/bin/webkit-browser" 'b10-r5' 'gtk-paint %s' 'frame-watch-web pid=%d' 'frame-watch-ui %s' \
+	'WPEB-WEBKIT gtk-paint import pid=%d' 'frame-trace' 'frame-ahead' 'opaque-frames' \
+	'WPEB-WEBKIT frame-pacing pid=%d ahead=%d opaque=%d' 'done_early=%llu'
 check_strings "${export_root}/usr/bin/wpe-browser" 'present frames=%u fps=%.1f'
 for f in usr/share/video-demo/rpivid-check/real-peertube-1080.mp4 usr/share/wpe-browser/b8.html; do
 	[ -f "${export_root}/${f}" ] || { echo "stage: MISSING /${f}"; bad=1; }

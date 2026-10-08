@@ -235,7 +235,7 @@ def gtk_breakdown(arm, skip):
         if len(parts) == 4:
             hist = [h + int(num(p, 0)) for h, p in zip(hist, parts)]
     out["dt_hist"] = hist
-    for key in ("superseded", "dropped", "unknown", "repaints", "fence_waits", "imports", "cycles", "cycles_frame", "frame_done", "received", "drawn"):
+    for key in ("superseded", "dropped", "unknown", "repaints", "fence_waits", "imports", "cycles", "cycles_frame", "frame_done", "done_early", "received", "drawn"):
         out[key] = int(sum(num(f.get(key), 0) for f in s))
     return out
 
@@ -311,7 +311,7 @@ def main():
             h = g["dt_hist"]
             total = sum(h) or 1
             print(f"  frame interval <25:{h[0]} <42:{h[1]} <58:{h[2]} >=58:{h[3]} ms ({100.0 * h[1] / total:.0f} % in 25-42)")
-            print(f"  counts: received={g['received']} drawn={g['drawn']} frame_done={g['frame_done']} superseded={g['superseded']}"
+            print(f"  counts: received={g['received']} drawn={g['drawn']} frame_done={g['frame_done']} done_early={g['done_early']} superseded={g['superseded']}"
                   f" dropped={g['dropped']} unknown={g['unknown']} repaints={g['repaints']} fence_waits={g['fence_waits']}"
                   f" imports={g['imports']} cycles={g['cycles']} cycles_with_frame={g['cycles_frame']}")
         t = trace_summary(arm)
