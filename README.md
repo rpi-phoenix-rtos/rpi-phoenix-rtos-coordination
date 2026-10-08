@@ -262,7 +262,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | Web browsers (WebKit 2.54) | ✅ | **WPE WebKit** (`browser`) and **WebKitGTK** with tabs and downloads (`webkit-browser`): JIT, GPU raster and compositing, WebGL; `<video>`, HLS and Media Source Extensions, HEVC on the hardware block shown without a CPU copy (1080p30 98.8 % of frames painted). Speedometer 1.28, JetStream-ab 79.6, Acid3 96; 32 popular sites load with no crash or hang (one slow site timed out in the GPU-raster run); 30-min soaks clean in both browsers; live Vimeo plays over MSE. See [docs/browser/PLAN.md](docs/browser/PLAN.md) |
 | GENET gigabit Ethernet + lwIP | ✅ | IRQ-driven, ~0.9 ms ping RTT, autonomous DHCP |
 | USB host (PCIe → VL805 xHCI) | ✅ | Enumerates reliably from cold boot |
-| USB HID (keyboard + mouse) | ✅ | `/dev/kbd0`, `/dev/mouse0`; live keys reach psh and apps |
+| USB HID (keyboard + mouse) | ✅ | `/dev/kbd0`, `/dev/mouse0`; live keys reach psh and apps. Mice run in HID report protocol (descriptor parsed) so the **scroll wheel** reaches Wayland, X11 and SDL apps; boot protocol is the fallback |
 | SD card (EMMC2 SDHCI) | ✅ | `/dev/mmcblk0`, MBR partitions; UHS-I DDR50, multi-block, **ADMA2 scatter-gather for reads and writes** (the engine Linux uses on this SoC), 0 corruption |
 | ext2 persistent root | ✅ | Mounts as `/`, binaries exec from the card |
 | NFS root | ✅ | `/` served over NFS (`takeover` design); over gigabit ~30 MB/s read / ~20 MB/s write (bit-exact, 0 faults) |
