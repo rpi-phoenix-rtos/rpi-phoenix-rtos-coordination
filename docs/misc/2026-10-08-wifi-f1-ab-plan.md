@@ -188,3 +188,25 @@ Batching works as designed (requests 110 k → 22 k for the same data, `tx_max=1
 the per-frame IPC path is **not** the bound. The model in §1 was wrong on this point. What is left:
 the air (HT20, AP txpower 3 dBm) or lwip's 64 KB TCP window. Next: the 5 GHz VHT80 arm.
 `wifi batch` stays default 0 until there is a measured reason to change it.
+
+## Result 2 — 5 GHz (2026-10-09, `wifi-5g`, `wifi-5g20`; the AP restored to 2.4 GHz ch6 afterwards)
+
+| AP | batch | TX MB/s | RX MB/s | frames/request tx / rx |
+|---|---|---|---|---|
+| 2.4 GHz ch6 HT20 | 0 | 4.96 | 4.57 | 1.00 / 0.91 |
+| 2.4 GHz ch6 HT20 | 1 | 5.12 | 4.73 | 4.15 / 5.66 |
+| 5 GHz ch36 20 MHz | 0 | 6.10 | 5.53 | 1.00 / 0.95 |
+| **5 GHz ch36 20 MHz** | **1** | **6.47** | **7.10** | 4.59 / 6.03 |
+| 5 GHz ch36 **80 MHz** | — | **no traffic** | | |
+
+- **5 GHz at 20 MHz** is +23 % TX and +21 % RX on its own: the 2.4 GHz channel is shared with
+  the neighbours on ch 4/8.
+- On the cleaner channel, **batching adds +28 % RX**, against +3 % at 2.4 GHz. Best case against
+  the baseline: TX +30 %, RX +55 %.
+- **80 MHz is broken:** the radio associates (`WIFISTATS radio chanspec=0xe02a ch=42 bw=80
+  band=5g`), but DHCP never completes (the Pi falls back to 169.254.x) and it receives 0–4 data
+  frames. A new defect, not yet investigated: the key handshake or the data path at VHT80 (the AP
+  transmits at 3 dBm).
+- **Owner decisions:**
+  - run the lab AP at 5 GHz / 20 MHz;
+  - make `wifi batch 1` the default (no errors in two runs: `tx_partial` 1, `tx_bad` 0).
