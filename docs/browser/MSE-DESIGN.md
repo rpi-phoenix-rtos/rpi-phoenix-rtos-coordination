@@ -73,7 +73,7 @@ budget for HLS and MSE.
 | HEVC 10-bit (Main10), rpivid | the block decodes 8 **or** 10 bit (`rpivid_hevc.c:221`) — not measured in a page | — | **gap:** 0030's layer buffer takes only 8-bit 4:2:0 (`supportsPixelFormat`), so 10-bit pictures go through `sws_scale` on the CPU (~1080p per frame). Prefer 8-bit renditions; Main10 only when no 8-bit HEVC or ≤720p H.264 exists; a 16-bit-plane upload path is a stage-2 item (needs `GL_R16`/`EXT_texture_norm16` on V3D — **unverified**) |
 | HEVC CPU (`FFMPEG_RPIVID=0`) | 720p30 real time (m10a1, 4 threads) | M10 §m10a1 | fallback only |
 | H.264 CPU | 720p30: 30 fps, 100 % painted over dma-buf in a page (build 42); 1080p30 synthetic testsrc2 clip: 29.9–30.5 fps in ffplay full screen | B8, M10 `m10a0b` | **≤1280×720, ≤30 fps** (owner); 1080p only when nothing else exists |
-| VP9 CPU | 360p30 only (ffplay) | M10 | stage 2; measure 480p/720p before answering yes above 480p |
+| VP9 CPU | **≤1080p30 real time** (ffplay, 2026-10-09: 480p/720p/1080p at 0.6–3.9 Mb/s, 30 fps, 0 late drops after the first 2 s; logs `vp9-cpu`, `vp9-cpu-hq`) | §13 item 7 | stage 2; 60 fps and in-page cost (WebProcess + compositor beside the decoder) not measured |
 | AV1 | not built | — | answer **no** everywhere |
 | AAC, Opus, AC-3/E-AC-3, MP3 | AAC + Opus played (B8, M10) | — | yes |
 
@@ -297,7 +297,8 @@ and append it in `PlatformMediaEngineConfigurationFactory.cpp`'s `defaultFactori
 | H.264 ≤1280×720 ≤30 fps | true | true | false |
 | H.264 ≤1920×1080 ≤30 fps | true | false | false |
 | H.264 above that | true | false | false |
-| VP9 profile 0 ≤640×360 (stage 2: ≤ measured cap) | true | true | false |
+| VP9 profile 0 ≤1280×720 ≤30 fps (measured: ffplay real time up to 1080p30) | true | true | false |
+| VP9 profile 0 ≤1920×1080 ≤30 fps | true | false until an in-page measurement | false |
 | VP9 above / VP9 profile 2 / AV1 | false | false | false |
 | AAC, Opus, AC-3/E-AC-3, MP3, FLAC, Vorbis | true | true | true |
 
@@ -746,7 +747,7 @@ fresh `wpe-browser --autoplay=allow --size=1000x620 <url>` killed after its time
 | Stage 1: MSE player (seek, readyState gating, EOS, codec switch, quality metrics, limits) | 2 |
 | Stage 1: CMake + one full build (~2 h) + MSE/hls.js pages + 2–3 Pi iterations | 2–3 |
 | **Stage 1 total** | **9–12** |
-| Stage 2: WebM parser (EBML Tracks/Cluster/SimpleBlock/BlockGroup, lacing, missing durations) + VP9/Opus answers after a VP9 480p/720p measurement | 3–4 |
+| Stage 2: WebM parser (EBML Tracks/Cluster/SimpleBlock/BlockGroup, lacing, missing durations) + VP9/Opus answers (VP9 rate measured 10-09, §3) | 3–4 |
 | Stage 2: native-HLS down-switch, MSE eviction/quality polish, 10-bit upload path study | 2–3 |
 
 ## 13. Open items to verify (before or during stage 0)
@@ -760,7 +761,12 @@ fresh `wpe-browser --autoplay=allow --size=1000x620 <url>` killed after its time
 5. Whether FFmpeg 6.1's mov demuxer really ignores a second `moov` in a fragmented stream (only
    matters for the "why not mov" argument; the decision stands on the other reasons).
 6. Real platforms' HEVC (§4): fetch masters and read `CODECS`; record in this file.
-7. VP9 decode rate at 480p/720p on the Pi (ffplay on generated clips) before stage 2 answers.
+7. ✅ 2026-10-09: VP9 decode rate on the Pi. Clips: 20 s of the 1080p showcase reel re-encoded with
+   libvpx-vp9 (`-deadline good -cpu-used 5 -row-mt 1`, tile columns 1/2/4, Opus 96k): 480p 0.56 Mb/s,
+   720p 1.08 Mb/s, 1080p 1.52 Mb/s and 1080p `-crf 18` 3.94 Mb/s (YouTube's 1080p30 range). `video-play`
+   full screen from psh (KMSDRM): **every clip 29.8–30.3 fps**, `drop_late` 2–3 all in the first 2 s and
+   flat afterwards, `vq` never empty; 1080p 3.9 Mb/s the same with `THREADS=4` and ffmpeg's auto; 0
+   faults. Not measured: 60 fps, VP9 profile 2, the decoder beside a running WebProcess.
 8. hls.js's `useMediaCapabilities` default and whether it filters levels on `supported` only or
    also on `smooth` (decides whether 1080p H.264 needs `supported=false` rather than `smooth=false`).
 
