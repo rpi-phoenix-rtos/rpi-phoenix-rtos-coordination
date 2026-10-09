@@ -174,3 +174,17 @@ A′ = `wifi batch 0`. Each arm runs `wifi status`, `wifi stats`,
 - one reorder at each switch;
 - empty polls cost more in poll mode;
 - no SDPCM TX glom yet.
+
+## Result 1 — frames per IPC, 2.4 GHz HT20 (2026-10-09, `wifi-batch-ab`, build of 10-09 02:21)
+
+| arm | frames per request tx / rx | daemon busy | TX MB/s (median) | RX MB/s (median) |
+|---|---|---|---|---|
+| batch 0 | 1.00 / 0.91 | 31.9 % | 4.96 | 4.57 |
+| **batch 1** | **4.15 / 5.66** | 31.7 % | 5.12 | 4.73 |
+| batch 0 (drift) | 1.00 / 0.91 | 33.3 % | 4.97 | 4.69 |
+
+Batching works as designed (requests 110 k → 22 k for the same data, `tx_max=16`, `rx_max=24`,
+1 partial TX write), but throughput moves only ~+3 %. The daemon is ~32 % busy in every arm, so
+the per-frame IPC path is **not** the bound. The model in §1 was wrong on this point. What is left:
+the air (HT20, AP txpower 3 dBm) or lwip's 64 KB TCP window. Next: the 5 GHz VHT80 arm.
+`wifi batch` stays default 0 until there is a measured reason to change it.
