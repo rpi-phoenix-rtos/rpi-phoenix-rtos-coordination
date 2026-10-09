@@ -420,3 +420,22 @@ frame is received, with a second pending slot), which should lift the cap toward
 1/max(15 ms, 20 ms) ≈ 50 fps. **Step 3** (cut GTK's ~15 ms per frame: opaque frames to skip the
 alpha backdrop upload, and the per-paint cairo surface) is the second lever. GTK 4 is not needed
 for the first gain.
+
+### 11.1 Steps 2 and 3 on the Pi (2026-10-09, patches 0106 + 0107)
+
+| arm (1080p60 MP4) | painted % | GTK UI fps | web frames/s | GTK draw ms |
+|---|---|---|---|---|
+| upstream pacing | 47.1 | 28.2 | 28.2 | ~7 |
+| `--frame-ahead` (0106) | 60.7 | 35.5 | 34.9 | ~11 |
+| `--opaque-frames` (0107) | 58.8 | 34.1 | 33.9 | 0.9 |
+| both | **68.8** | **39.6** | **49.6** | 1.1 |
+
+1080p30 HLS: 95.1 → 98.7 % with frame-ahead. MotionMark-quick: 1.57 → **76.48** (ahead) /
+**79.60** (opaque) at MotionMark's 45 fps target, which is WPE's level (~75). With both, MotionMark
+picked a 60 fps target (16.63), so that score is not comparable. With frame-ahead the two processes
+run at once and contend for the CPU and the serial V3D queue, so GTK's own cycle grows 15 → 23 ms.
+Opaque frames (XB24, `alpha_bits=0`) remove GDK's backdrop upload. What is left is GDK's per-paint
+cairo surface (5–7 ms "before").
+
+**Both are on by default since launcher b10-r6** (ports `90d5fd3`); `--no-frame-ahead` /
+`--no-opaque-frames` restore upstream's behaviour.
