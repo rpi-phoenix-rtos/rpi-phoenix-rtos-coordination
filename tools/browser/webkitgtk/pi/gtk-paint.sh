@@ -96,9 +96,17 @@ spec() {  # spec <arm>: sets CMD (the browser and its words), SECS
 	local trace=${TRACE:-150@30} base=$1 flags=()
 	SECS=${SECS_DEFAULT}
 	# webkit-browser's pacing flags, from the arm's suffixes (gtk arms only)
-	case "${base}" in *-opaque) flags=(--opaque-frames); base=${base%-opaque} ;; esac
-	case "${base}" in *-ahead) flags=(--frame-ahead "${flags[@]}"); base=${base%-ahead} ;; esac
-	case "${base}" in wpe-*) [ "${#flags[@]}" = 0 ] || return 1 ;; esac
+	# Since launcher b10-r6 both are ON by default, so a gtk arm states both choices explicitly
+	local ahead=0 opaque=0
+	case "${base}" in *-opaque) opaque=1; base=${base%-opaque} ;; esac
+	case "${base}" in *-ahead) ahead=1; base=${base%-ahead} ;; esac
+	case "${base}" in
+		wpe-*) [ "${ahead}${opaque}" = 00 ] || return 1 ;;
+		*)
+			if [ "${ahead}" = 1 ]; then flags=(--frame-ahead); else flags=(--no-frame-ahead); fi
+			if [ "${opaque}" = 1 ]; then flags+=(--opaque-frames); else flags+=(--no-opaque-frames); fi
+			;;
+	esac
 	case "${base}" in
 		gtk-hls30) CMD=("${GTK}" --autoplay=allow --size="${SIZE}" --present-stats="${STATS}" --frame-trace="${trace}" "${flags[@]}" "${HLS30}&run=$1") ;;
 		gtk-hls30-g6) CMD=("${GTK}" --autoplay=allow --present-stats="${STATS}" --frame-trace="${trace}" "${flags[@]}" "${HLS30}&run=$1") ;;

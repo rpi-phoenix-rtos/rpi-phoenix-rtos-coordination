@@ -221,8 +221,9 @@ run_one() {
 	if [ "${KIND}" = gtk ]; then
 		# webkit-browser (WebKitGTK): dma-buf frames whenever GDK has GL; shared memory on request
 		case "${arm}" in *shm*) envs+=(WEBKIT_DMABUF_RENDERER_FORCE_SHM=1) ;; esac
-		case "${arm}" in *ahead*) extra+=(--frame-ahead) ;; esac
-		case "${arm}" in *opaque*) extra+=(--opaque-frames) ;; esac
+		# both ON by default since launcher b10-r6: each arm states its choice
+		case "${arm}" in *ahead*) extra+=(--frame-ahead) ;; *) extra+=(--no-frame-ahead) ;; esac
+		case "${arm}" in *opaque*) extra+=(--opaque-frames) ;; *) extra+=(--no-opaque-frames) ;; esac
 		extra+=(--size=1280x800 --private)
 	else
 		case "${arm}" in *shm*) extra+=(--shm) ;; *headless*) ;; *) extra+=(--dmabuf) ;; esac

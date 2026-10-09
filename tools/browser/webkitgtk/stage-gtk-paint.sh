@@ -50,7 +50,7 @@ check_strings() {  # check_strings <binary> <string...>
 		fi
 	done
 }
-check_strings "${export_root}/usr/bin/webkit-browser" 'b10-r5' 'gtk-paint %s' 'frame-watch-web pid=%d' 'frame-watch-ui %s' \
+check_strings "${export_root}/usr/bin/webkit-browser" 'b10-r6' 'gtk-paint %s' 'frame-watch-web pid=%d' 'frame-watch-ui %s' \
 	'WPEB-WEBKIT gtk-paint import pid=%d' 'frame-trace' 'frame-ahead' 'opaque-frames' \
 	'WPEB-WEBKIT frame-pacing pid=%d ahead=%d opaque=%d' 'done_early=%llu'
 check_strings "${export_root}/usr/bin/wpe-browser" 'present frames=%u fps=%.1f'
