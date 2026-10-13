@@ -39,7 +39,10 @@
 #   --uart DEV        explicit serial device (default: auto-detect, same logic
 #                     as capture-rpi4b-uart.sh; or set RPI4B_UART_DEV)
 #   --grabber DEV     HDMI grabber video device (default: /dev/video4, or set
-#                     RPI4B_HDMI_GRABBER)
+#                     RPI4B_HDMI_GRABBER). The preview is uncompressed YUYV
+#                     1920x1080@60 when the grabber is on a USB3 port, MJPEG
+#                     1920x1080@30 on USB2; override with RPI4B_HDMI_INFMT
+#                     (yuyv422|mjpeg), RPI4B_HDMI_RES, RPI4B_HDMI_FPS
 #   --no-preview      do not open an HDMI window; stream UART only and wait for
 #                     Ctrl-C (use this on a headless host with no GUI / no
 #                     ffplay/mpv)
@@ -367,6 +370,24 @@ if [ "$preview_kind" = "none" ]; then
 	# only way out — which the trap turns into clean cleanup + power-off.
 	wait "$uart_pid"
 else
+	# Capture mode. The MS2130 grabber (MacroSilicon C3-1) sends UNCOMPRESSED YUYV at
+	# 1920x1080 60 fps on a USB3 link (~250 MB/s): no JPEG artefacts (the blur and blocks of
+	# the old MJPEG preview were the grabber's own encoder, not ffplay) and no JPEG decode on
+	# the latency path. On a USB2 port raw 1080p does not fit, so fall back to MJPEG 30 fps.
+	# RPI4B_HDMI_INFMT / RPI4B_HDMI_RES / RPI4B_HDMI_FPS override the choice.
+	usb_speed=""
+	sysdev="$(readlink -f "/sys/class/video4linux/$(basename "$(readlink -f "$grabber")")/device" 2>/dev/null)"
+	[ -n "$sysdev" ] && [ -r "$sysdev/../speed" ] && usb_speed="$(cat "$sysdev/../speed")"
+	if [ -n "${RPI4B_HDMI_INFMT:-}" ]; then
+		infmt="$RPI4B_HDMI_INFMT"
+	elif [ "${usb_speed:-0}" -ge 5000 ] 2>/dev/null; then
+		infmt="yuyv422"
+	else
+		infmt="mjpeg"
+	fi
+	if [ "$infmt" = "mjpeg" ]; then fps="${RPI4B_HDMI_FPS:-30}"; else fps="${RPI4B_HDMI_FPS:-60}"; fi
+	res="${RPI4B_HDMI_RES:-1920x1080}"
+	log "preview: ${infmt} ${res}@${fps} (grabber USB link ${usb_speed:-unknown} Mbit/s)"
 	log "opening live HDMI preview window from $grabber — CLOSE THE WINDOW to stop."
 	log "tip: once psh is up, type on the USB keyboard on the Pi and watch it echo."
 	if [ "$preview_kind" = "ffplay" ]; then
@@ -377,15 +398,18 @@ else
 		# whatever the device's lingering default is. A prior `ffmpeg -video_size`
 		# or `v4l2-ctl --set-fmt` (e.g. the flicker-capture harness) persistently
 		# changes the v4l2 device default, which would otherwise open this preview
-		# tiny/upscaled. MJPEG (not raw YUYV) is what the USB grabber can sustain at
-		# 1080p30. Override with RPI4B_HDMI_RES / RPI4B_HDMI_INFMT if needed.
+		# tiny/upscaled. The mode ($infmt $res@$fps) is chosen above.
+		# -probesize/-analyzeduration: open at once (the format is pinned above anyway);
+		# -framedrop: never fall behind the live picture.
 		ffplay \
 			-f v4l2 \
-			-input_format "${RPI4B_HDMI_INFMT:-mjpeg}" \
-			-video_size "${RPI4B_HDMI_RES:-1920x1080}" \
-			-framerate 30 \
+			-input_format "$infmt" \
+			-video_size "$res" \
+			-framerate "$fps" \
+			-probesize 32 -analyzeduration 0 \
 			-fflags nobuffer \
 			-flags low_delay \
+			-framedrop \
 			-i "$grabber" \
 			-window_title "Pi4 live (close window to power off)" \
 			>/dev/null 2>&1 &
@@ -396,7 +420,7 @@ else
 		mpv \
 			--profile=low-latency \
 			--untimed \
-			--demuxer-lavf-o=video_size="${RPI4B_HDMI_RES:-1920x1080}",input_format="${RPI4B_HDMI_INFMT:-mjpeg}" \
+			--demuxer-lavf-o=video_size="$res",input_format="$infmt",framerate="$fps" \
 			--title="Pi4 live (close window to power off)" \
 			"av://v4l2:$grabber" \
 			>/dev/null 2>&1 &
