@@ -146,7 +146,7 @@ a Thunar window. The session runs until you log out. Then it stops cleanly and r
   | Menu | Entries |
   |---|---|
   | **Games** | Quake, Quake II, Quake III Arena, SuperTuxKart. Each opens in a 1280×720 window (see [§6.2](#62-in-a-window-on-the-desktop)). |
-  | **Multimedia** | Video Player (gtk-video), Video Demo (plays a demo clip in a window) |
+  | **Multimedia** | Video Player (gtk-video), Video Demo (plays a demo clip in a window, in gtk-video) |
   | **Internet** | Web Browser (WPE WebKit), WebKit Browser (WebKitGTK with tabs and downloads, in an image with the `webkit_gtk` port; [§7.4](#74-web-browsing)) |
   | **Office** | Atril Document Viewer |
   | **System / Accessories** | Foot, Bash, Midnight Commander, File Manager, Settings Manager, Appearance, Application Finder, Run Program |
@@ -357,8 +357,9 @@ picks the mode for you:
 ```
 
 - **From psh**, the video plays full screen and returns to the prompt at the end.
-- **From a desktop terminal**, it plays in a window.
-- In the desktop menu, **Multimedia → Video Demo** plays the same clip in a window.
+- **From a desktop terminal**, it plays in a window. ⚠ In a window it sometimes closes at its
+  first frame (KNOWN-ISSUES C18); start it again, or use gtk-video below for a window.
+- In the desktop menu, **Multimedia → Video Demo** plays the same clip in a window (in gtk-video).
 
 **Keys:**
 
@@ -761,8 +762,8 @@ This is the recommended way to show the whole system, with the best settings for
    3. **Games → Quake III Arena** runs in a window next to Thunar and foot (70–74 fps). Close
       it, then open **Games → SuperTuxKart** the same way (~19 fps).
    4. **Office → Atril** opens the sample PDF.
-   5. **Multimedia → Video Demo** plays a clip in a window. Press **f** for full screen, then
-      **f** again to go back to the window.
+   5. **Multimedia → Video Demo** plays a clip in a window (gtk-video, 30 fps). Show full-screen
+      video from psh instead (step 5): gtk-video's own full screen is CPU-bound (14–17 fps).
    6. **Log Out.**
 
    For an unattended run of the same scene, set it up before the session instead:
