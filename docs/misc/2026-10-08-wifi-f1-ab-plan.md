@@ -210,3 +210,15 @@ the air (HT20, AP txpower 3 dBm) or lwip's 64 KB TCP window. Next: the 5 GHz VHT
 - **Owner decisions:**
   - run the lab AP at 5 GHz / 20 MHz;
   - make `wifi batch 1` the default (no errors in two runs: `tx_partial` 1, `tx_bad` 0).
+
+## Result 3 — the 80 MHz lease fix (2026-10-13, build of 10-09 04:18, devices `896d809`)
+
+The "no data at 80 MHz" of Result 2 had two parts. **Part 1, fixed:** the receive path clamped the firmware's
+credit grant against the data path's sequence, which is stale while a join runs; a first-boot join that needed
+3 SET_SSID attempts ended with a shut transmit window (`blocked=9 tx_ok=0`) and nothing reopened it. The clamp
+now uses the bus sequence (brcmfmac's `bus->tx_seq`). Pi checks: `wifirejoin` (5 rejoins, the bus sequence
+pumped to ~150/200/240 before 3 of them) — old image `blocked=1` on 3 rejoins and two 15–20 s leases; fixed
+image **6/6 leases in 5 s, `blocked=0`** (`wifi-rejoin-old2`, `wifi-rejoin-fix`). At VHT80 the lease now
+arrives (`wifi-vht80-fix`: `ch=42 bw=80`, 10.43.0.89). **Part 2, open:** bulk receive at 80 MHz is nearly dead
+(`rx req=544 frames=3`), so every TCP run is reset by the peer. Not pursued before the 10-15 demo; run the AP
+at 20 MHz. The gate's `waitip` now skips AutoIP (169.254) addresses.
