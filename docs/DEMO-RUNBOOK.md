@@ -42,14 +42,13 @@ stk race
 | 4 | panel: terminal button (or Super+Return) | foot terminal; `mc` runs in colour |
 | 5 | panel: **browser button** → `en.wikipedia.org`, a second tab (Ctrl+T) | WebKitGTK 2.54 with tabs, HTTPS, GPU rendering |
 | 6 | **Applications → Games → Quake III Arena** | Quake III in a window next to the others, 80–87 fps |
-| 7 | **Applications → Multimedia → Video Demo** | the 720p video in a window (GTK player, 30 fps, 0 dropped) |
-| 8 | **Applications → Office → Atril** | a PDF |
-| 9 | panel: **Log Out** | back to `(psh)%`, cleanly |
-| 10 | `quake3 +map q3dm1` | full screen 1080p, 60 fps (vsync) |
-| 11 | `vkquake +playdemo demo1` | Quake on **Vulkan** on the V3D, ~42 fps (after the warm-up) |
-| 12 | `game-res stk 1280x720 race` | SuperTuxKart, an AI race, ends by itself |
-| 13 | `/bin/bash /bin/video-play /usr/share/video-demo/hevc-720p30-aac.mp4` | **HEVC decoded on the Pi's hardware block**, full screen, real time |
-| 14 | `/bin/bash /bin/startx` | X11 (Xorg + glamor), Window Maker, GL window, xclock, xbill |
+| 7 | **Applications → Office → Atril** | a PDF |
+| 8 | panel: **Log Out** (the rightmost button; also Applications → System → Log Out, or **Ctrl+Alt+Delete**) | back to `(psh)%`, cleanly |
+| 9 | `quake3 +map q3dm1` | full screen 1080p, 60 fps (vsync) |
+| 10 | `vkquake +playdemo demo1` | Quake on **Vulkan** on the V3D, ~42 fps (after the warm-up) |
+| 11 | `game-res stk 1280x720 race` | SuperTuxKart, an AI race, ends by itself |
+| 12 | `/bin/bash /bin/video-play /usr/share/video-demo/hevc-720p30-aac.mp4` | **HEVC decoded on the Pi's hardware block**, full screen, real time |
+| 13 | `/bin/bash /bin/startx` | X11 (Xorg + glamor), Window Maker, GL window, xclock, xbill; the root menu (right click) has the X11 programs; **Session → Exit Session** returns to psh in ~4 s. The mouse pointer flickers while it moves (known, cosmetic) |
 
 Quit games with Esc → Quit (Quake III: Esc → Exit), or set `export GAMEDRM_EXIT_SECS=90` first so each
 ends by itself 90 s after its first frame.
@@ -58,7 +57,7 @@ ends by itself 90 s after its first frame.
 
 | Avoid | Why | Instead |
 |---|---|---|
-| `video-play` **inside the desktop** (a terminal on XFCE) | ffplay in a window sometimes closes at its first frame (KNOWN-ISSUES C18) | the **Video Demo** menu entry (GTK player), or `video-play` **full screen from psh** (step 13) |
+| **Any video inside the desktop** (`video-play` in a terminal on XFCE, gtk-video, video in the browser) | windowed video is broken: ffplay closes at its first frame (C18), gtk-video shows a black picture (C19); the menu entries are hidden | video **full screen from psh** only (step 12), after Log Out |
 | **Vimeo**, YouTube, very heavy video sites in the browser | memory: the desktop used to freeze when it ran out (C17) | Wikipedia, GitHub, news sites. Watch the panel's `Mem` bar; if it turns red, close the browser. a page above ~770 MB is now terminated by the browser (its tab says so; the browser keeps running), and `lowmemd` ends the largest program below 200 MB free. On 10-13 a Vimeo video page took the whole desktop down before these limits existed |
 | vkQuake cold in front of people | ~75 s of black on its first start | the warm-up above |
 | SuperTuxKart in a **window** | slow to load (~1 min) and ~18 fps | `game-res stk 1280x720 race` full screen (~22 fps) |
@@ -66,6 +65,12 @@ ends by itself 90 s after its first frame.
 | WiFi on the Pi | not needed; 80 MHz channels do not carry data (F1) | the wired netboot link gives the Pi internet |
 
 ## 4. If something goes wrong
+
+**The UART (serial log)** is optional for the demo — HDMI shows everything. On 10-13 the USB-serial
+adapter dropped off the laptop's USB mid-session; `live-test-rpi4b.sh` now reconnects by itself and
+marks the gap in the log (`UART reader stopped … reconnecting`). Plug the adapter straight into the
+laptop (no hub) and check its three wires on the Pi's GPIO header.
+
 
 | Symptom | Do this |
 |---|---|
