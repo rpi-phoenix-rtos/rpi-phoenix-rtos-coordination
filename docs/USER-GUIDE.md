@@ -128,14 +128,17 @@ a Thunar window. The session runs until you log out. Then it stops cleanly and r
 ### What is on it
 
 - **The panel**, from left to right: the **Applications menu**, launchers for the **terminal
-  (foot)**, the **file manager (Thunar)**, the **web browser** and the **application finder**,
+  (foot)**, the **file manager (Thunar)**, the **web browser** (the WebKit Browser, with tabs) and the **application finder**,
   the **task list** (one
   button per window), the **memory monitor**, the **clock** (local time) and the **Log Out** button.
 - **The memory monitor** shows `Mem <used>/<total> GB` with a bar: green below 75 % used, yellow
   to 90 %, red above. Hover it for the free memory and the 5 programs using the most. Phoenix has
-  no out-of-memory killer: when memory runs out, programs fail at once and the desktop can stop
-  responding (KNOWN-ISSUES C17). Close something when the bar turns red. The same figures go to
-  the serial console every 30 s as `MEMMON …` lines.
+  no out-of-memory killer in the kernel, so the session runs **lowmemd**: when less than 200 MB is
+  free it ends the largest program (at least 256 MB; never the panel, the desktop or labwc) and
+  prints a `LOWMEMD …` line on the serial console. That is usually the browser, which you can
+  start again. Close something when the bar turns red, before it comes to that. The same figures
+  go to the serial console every 30 s as `MEMMON …` lines. `export LOWMEMD=0` before
+  `xfce-session` turns lowmemd off (KNOWN-ISSUES C17).
 - **Thunar**, the file manager. It opens on `/` when the session starts.
 - **foot**, the terminal. It runs bash, with the same programs as psh.
 - **The Applications menu**:
@@ -470,8 +473,9 @@ windowmaker port stages /etc/WindowMaker/WMRootMenu) opens an xterm under Xorg. 
 
 The desktop's browser is **WebKit** (WPE WebKit 2.54, the engine of Safari and GNOME Web). It
 renders today's sites: Wikipedia, GitHub, DuckDuckGo, Stack Overflow (including its Cloudflare
-check) and news sites, over HTTPS with HTTP/2. In the XFCE session, open it from the panel's
-browser button or **Applications → Internet → Web Browser**, or from the terminal:
+check) and news sites, over HTTPS with HTTP/2. In the XFCE session, open it from
+**Applications → Internet → Web Browser**, or from the terminal (the panel's browser button opens
+the WebKit Browser below):
 
 ```
 /bin/bash /bin/browser                        # the start page
@@ -511,7 +515,8 @@ An image built with the `webkit_gtk` port (browser milestone B10,
 [docs/browser/B10-WEBKITGTK.md](browser/B10-WEBKITGTK.md)) also has a desktop browser with tabs,
 a downloads bar and the usual dialogs (drop-down lists, right-click menus, file upload, password
 prompts, JavaScript alerts). It is the same WebKit 2.54 engine as the browser above, in a GTK 3
-window. Open **Applications → Internet → WebKit Browser**, or from the terminal:
+window. Open it from the panel's browser button or **Applications → Internet → WebKit Browser**,
+or from the terminal:
 
 ```
 /usr/bin/webkit-browser                                 # the start page

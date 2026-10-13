@@ -24,12 +24,15 @@ if [ -z "${INET_NIC}" ]; then
 	exit 1
 fi
 
-echo "pi-internet-nat: NAT ${PI_SUBNET} -> ${INET_NIC}"
+echo "pi-internet-nat: NAT ${PI_SUBNET} -> any uplink (default route now: ${INET_NIC})"
 
 sudo sysctl -q -w net.ipv4.ip_forward=1
 
-sudo iptables -t nat -C POSTROUTING -s "${PI_SUBNET}" -o "${INET_NIC}" -j MASQUERADE 2>/dev/null \
-	|| sudo iptables -t nat -A POSTROUTING -s "${PI_SUBNET}" -o "${INET_NIC}" -j MASQUERADE
+# Masquerade out of ANY interface, not just today's default-route NIC: the uplink can change
+# while the server is up (a venue's Ethernet, or a phone tethered over USB plugged in later),
+# and a rule pinned to one NIC then silently cuts the Pi off the internet.
+sudo iptables -t nat -C POSTROUTING -s "${PI_SUBNET}" ! -d "${PI_SUBNET}" -j MASQUERADE 2>/dev/null \
+	|| sudo iptables -t nat -A POSTROUTING -s "${PI_SUBNET}" ! -d "${PI_SUBNET}" -j MASQUERADE
 
 sudo iptables -C FORWARD -s "${PI_SUBNET}" -j ACCEPT 2>/dev/null \
 	|| sudo iptables -I FORWARD 1 -s "${PI_SUBNET}" -j ACCEPT
