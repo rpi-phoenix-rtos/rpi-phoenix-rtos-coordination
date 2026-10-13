@@ -185,7 +185,8 @@ cleanup() {
 	fi
 
 	if [ -n "$uart_pid" ] && kill -0 "$uart_pid" 2>/dev/null; then
-		# SIGTERM lets picocom's own handler release the kernel TTY lock.
+		# The reconnect loop first (so it cannot restart picocom), then picocom itself via
+		# fuser below; SIGTERM lets picocom's own handler release the kernel TTY lock.
 		kill -TERM "$uart_pid" 2>/dev/null || true
 		wait "$uart_pid" 2>/dev/null || true
 	fi
@@ -341,24 +342,36 @@ printf '\n' >&2
 # (the USB-UART driver retains the previous baud across opens). --noreset keeps
 # DTR/RTS from bouncing the adapter. Errors on stderr go to /dev/null so they
 # don't interleave with the live UART stream on stdout.
-stdbuf -oL picocom \
-	--baud "$baud" \
-	--flow n \
-	--parity n \
-	--databits 8 \
-	--stopbits 1 \
-	--noreset \
-	"$uart_dev" <"$stdin_fifo" 2>/dev/null \
-	> >(stdbuf -oL tee -a "$log_path") &
-uart_pid=$!
-
-# Give picocom a moment; if it died immediately (e.g. lock contention), bail.
-sleep 1
-if ! kill -0 "$uart_pid" 2>/dev/null; then
-	log "ERROR: UART reader (picocom) exited immediately — device busy/locked?"
-	log "check that no other picocom/tio holds $uart_dev"
+#
+# picocom runs in a reconnect loop: a USB-serial adapter that drops off the bus and
+# re-enumerates (seen 2026-10-13: "pl2303 converter now disconnected from ttyUSB0", back a
+# second later) ends picocom, and before this loop the rest of the session went unseen and
+# unsaved. The loop marks the gap in the log, waits for the device to come back and
+# restarts picocom. Cleanup kills the loop, then whatever holds the device (fuser -k).
+if have fuser && fuser "$uart_dev" >/dev/null 2>&1; then
+	log "ERROR: $uart_dev is held by another program (a running capture or picocom/tio?)"
 	exit 1
 fi
+uart_loop() {
+	while :; do
+		# setsid -w: picocom signals its whole process group when it exits, which would
+		# end this loop with it (memory: feedback_test_cycle_timeout); its own session
+		# keeps the loop alive.
+		setsid -w stdbuf -oL picocom \
+			--baud "$baud" \
+			--flow n \
+			--parity n \
+			--databits 8 \
+			--stopbits 1 \
+			--noreset \
+			"$uart_dev" <"$stdin_fifo" 2>/dev/null
+		printf '\n[live-test] %s UART reader stopped (adapter unplugged or reset?); reconnecting...\n' "$(date +%T)"
+		until [ -e "$uart_dev" ]; do sleep 1; done
+		sleep 2
+	done
+}
+uart_loop > >(stdbuf -oL tee -a "$log_path") &
+uart_pid=$!
 
 # ---------------------------------------------------------------------------
 # 6. Open the live HDMI preview window (or, with --no-preview, just wait).
