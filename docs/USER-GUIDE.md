@@ -357,8 +357,8 @@ picks the mode for you:
 ```
 
 - **From psh**, the video plays full screen and returns to the prompt at the end.
-- **From a desktop terminal**, it plays in a window. ⚠ In a window it sometimes closes at its
-  first frame (KNOWN-ISSUES C18); start it again, or use gtk-video below for a window.
+- **From a desktop terminal**, it plays in a window. ⚠ In a window it often closes at its
+  first frame (KNOWN-ISSUES C18); use gtk-video below (Multimedia → Video Player) for a window.
 - In the desktop menu, **Multimedia → Video Demo** plays the same clip in a window (in gtk-video).
 
 **Keys:**

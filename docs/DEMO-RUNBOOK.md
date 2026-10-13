@@ -42,7 +42,8 @@ stk race
 | 4 | panel: terminal button (or Super+Return) | foot terminal; `mc` runs in colour |
 | 5 | panel: **browser button** → `en.wikipedia.org`, a second tab (Ctrl+T) | WebKitGTK 2.54 with tabs, HTTPS, GPU rendering |
 | 6 | **Applications → Games → Quake III Arena** | Quake III in a window next to the others, 80–87 fps |
-| 7 | **Applications → Office → Atril** | a PDF |
+| 7 | **Applications → Multimedia → Video Demo** | the 720p video in a window (GTK player, 30 fps) — fixed 10-14 |
+| 7b | **Applications → Office → Atril** | a PDF |
 | 8 | panel: **Log Out** (the rightmost button; also Applications → System → Log Out, or **Ctrl+Alt+Delete**) | back to `(psh)%`, cleanly |
 | 9 | `quake3 +map q3dm1` | full screen 1080p, 60 fps (vsync) |
 | 10 | `vkquake +playdemo demo1` | Quake on **Vulkan** on the V3D, ~42 fps (after the warm-up) |
@@ -57,7 +58,7 @@ ends by itself 90 s after its first frame.
 
 | Avoid | Why | Instead |
 |---|---|---|
-| **Any video inside the desktop** (`video-play` in a terminal on XFCE, gtk-video, video in the browser) | windowed video is broken: ffplay closes at its first frame (C18), gtk-video shows a black picture (C19); the menu entries are hidden | video **full screen from psh** only (step 12), after Log Out |
+| `video-play` **in a terminal on the desktop**, video in the browser | ffplay in a window often closes at its first frame (C18); browser video is unreliable | the **Video Demo** / **Video Player** menu entries (GTK player, verified 10-14), or `video-play` **full screen from psh** (step 12) |
 | **Vimeo**, YouTube, very heavy video sites in the browser | memory: the desktop used to freeze when it ran out (C17) | Wikipedia, GitHub, news sites. Watch the panel's `Mem` bar; if it turns red, close the browser. a page above ~770 MB is now terminated by the browser (its tab says so; the browser keeps running), and `lowmemd` ends the largest program below 200 MB free. On 10-13 a Vimeo video page took the whole desktop down before these limits existed |
 | vkQuake cold in front of people | ~75 s of black on its first start | the warm-up above |
 | SuperTuxKart in a **window** | slow to load (~1 min) and ~18 fps | `game-res stk 1280x720 race` full screen (~22 fps) |
