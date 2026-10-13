@@ -59,7 +59,7 @@ ends by itself 90 s after its first frame.
 | Avoid | Why | Instead |
 |---|---|---|
 | `video-play` **inside the desktop** (a terminal on XFCE) | ffplay in a window sometimes closes at its first frame (KNOWN-ISSUES C18) | the **Video Demo** menu entry (GTK player), or `video-play` **full screen from psh** (step 13) |
-| YouTube / very heavy sites in the browser for long | memory: the desktop used to freeze when it ran out (C17) | Wikipedia, GitHub, news sites. Watch the panel's `Mem` bar; if it turns red, close the browser. `lowmemd` now ends the largest program (usually the browser) below 200 MB free instead of letting the desktop hang |
+| **Vimeo**, YouTube, very heavy video sites in the browser | memory: the desktop used to freeze when it ran out (C17) | Wikipedia, GitHub, news sites. Watch the panel's `Mem` bar; if it turns red, close the browser. a page above ~770 MB is now terminated by the browser (its tab says so; the browser keeps running), and `lowmemd` ends the largest program below 200 MB free. On 10-13 a Vimeo video page took the whole desktop down before these limits existed |
 | vkQuake cold in front of people | ~75 s of black on its first start | the warm-up above |
 | SuperTuxKart in a **window** | slow to load (~1 min) and ~18 fps | `game-res stk 1280x720 race` full screen (~22 fps) |
 | The WPE browser (Applications → Internet → Web Browser) | one page per window, no tabs | the panel's browser button (WebKitGTK) |
