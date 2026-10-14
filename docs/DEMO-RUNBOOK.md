@@ -43,6 +43,7 @@ stk race
 | 5 | panel: **browser button** → `en.wikipedia.org`, a second tab (Ctrl+T) | WebKitGTK 2.54 with tabs, HTTPS, GPU rendering |
 | 6 | **Applications → Games → Quake III Arena** | Quake III in a window next to the others, 80–87 fps |
 | 7 | **Applications → Multimedia → Video Demo** | the 720p video in a window (GTK player, 30 fps) — fixed 10-14 |
+| 7a | **Applications → Multimedia → Video in the Browser** | HEVC video **in the WebKit browser**, decoded on the Pi's hardware block with zero copy, 30 fps, looping (verified 10-14). Close the window when done |
 | 7b | **Applications → Office → Atril** | a PDF |
 | 8 | panel: **Log Out** (the rightmost button; also Applications → System → Log Out, or **Ctrl+Alt+Delete**) | back to `(psh)%`, cleanly |
 | 9 | `quake3 +map q3dm1` | full screen 1080p, 60 fps (vsync) |
