@@ -67,6 +67,11 @@ ends by itself 90 s after its first frame.
 
 ## 4. If something goes wrong
 
+**Fallback without the host:** the Pi's SD card holds the same build (release #4, verified 10-14). With the
+netboot server down (`./scripts/netboot-server-down.sh`, or no host at all) the Pi boots from the card in ~50 s;
+everything in §2 works the same, except web pages need a network with DHCP on the Pi's Ethernet port.
+
+
 **The UART (serial log)** is optional for the demo — HDMI shows everything. On 10-13 the USB-serial
 adapter dropped off the laptop's USB mid-session; `live-test-rpi4b.sh` now reconnects by itself and
 marks the gap in the log (`UART reader stopped … reconnecting`). Plug the adapter straight into the
