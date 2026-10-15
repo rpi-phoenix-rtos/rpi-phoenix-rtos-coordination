@@ -6,9 +6,9 @@ demo candidate 1, manifest [`2026-10-13-demo-candidate-1`](../manifests/2026-10-
 
 ## 1. Set up (at the venue, before the audience)
 
-The lab setup: the host laptop netboots the Pi (DHCP + TFTP + NFS root) over the USB Ethernet adapter and
-gives it internet through its own uplink — venue Ethernet or the iPhone tethered over USB, either works,
-and the uplink may change while the server runs.
+The lab setup ([LAB-SETUP.md](LAB-SETUP.md)): the laptop netboots the Pi (DHCP + TFTP + NFS root) over its **built-in Ethernet**
+through a switch, gets internet from the **iPhone over USB-C**, and runs the WiFi soft-AP **PhoenixNet** that the Meross
+plug (Pi power) joins to reach its cloud. Both NATs follow whatever uplink holds the default route.
 
 ```
 ./scripts/netboot-server-up.sh       # once after the host boots: sync the NFS root, NAT, DHCP/TFTP

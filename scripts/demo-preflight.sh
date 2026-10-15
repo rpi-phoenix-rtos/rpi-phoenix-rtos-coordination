@@ -38,7 +38,7 @@ fi
 if ip -4 addr show | grep -q 'inet 10\.42\.0\.1/'; then
 	ok netboot-nic "$(ip -4 -o addr show | awk '/10\.42\.0\.1\// {print $2}')"
 else
-	fail netboot-nic "no interface has 10.42.0.1: plug in the Pi's USB Ethernet adapter, then ./scripts/netboot-server-up.sh"
+	fail netboot-nic "no interface has 10.42.0.1: check the built-in Ethernet (enp1s0f0) cable to the switch and RPI4B_NETBOOT_IFACE in .env.local (docs/LAB-SETUP.md), then ./scripts/netboot-server-up.sh"
 fi
 
 # 4. the NFS root
