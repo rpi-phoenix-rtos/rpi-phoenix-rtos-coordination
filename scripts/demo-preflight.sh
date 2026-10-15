@@ -82,7 +82,28 @@ else
 	fail https "HTTPS from the host fails: a captive portal or no internet"
 fi
 
-# 7. the serial console is free (a stray capture holds it)
+# 7. the soft-AP the smart plug joins (and the Pi's WiFi, when used): NetworkManager's
+#    shared-mode profile `phoenix-ap` on the host's WiFi (2.4 GHz: the Meross MSS620 has no
+#    5 GHz), NATed by NetworkManager out of whatever uplink holds the default route
+if [ "$(nmcli -t -f GENERAL.STATE connection show phoenix-ap 2>/dev/null | cut -d: -f2)" = activated ]; then
+	ok soft-ap "phoenix-ap up: SSID $(nmcli -t -f 802-11-wireless.ssid connection show phoenix-ap | cut -d: -f2), 10.43.0.1, band $(nmcli -t -f 802-11-wireless.band connection show phoenix-ap | cut -d: -f2)"
+else
+	fail soft-ap "phoenix-ap is down: sudo nmcli connection up phoenix-ap (the smart plug reaches its cloud through it)"
+fi
+
+# 8. the smart plug that powers the Pi (Meross cloud; it must be online through the soft-AP)
+plug="${MEROSS_PLUG_SCRIPT:-/home/houp/meross-plug/plug.py}"
+if [ -x "${plug}" ]; then
+	st="$(timeout 60 "${plug}" status 2>&1 | tail -1)"
+	case "${st}" in
+		*": ON"|*": OFF") ok plug "${st}" ;;
+		*) fail plug "the plug does not answer (${st:-no reply}): is it paired and on PhoenixNet? See docs/LAB-SETUP.md" ;;
+	esac
+else
+	ok plug "no plug helper (${plug}); power the Pi by hand"
+fi
+
+# 9. the serial console is free (a stray capture holds it)
 if command -v fuser >/dev/null && fuser /dev/ttyUSB0 >/dev/null 2>&1; then
 	fail uart "/dev/ttyUSB0 is held by another program (a running capture?)"
 else
