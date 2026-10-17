@@ -1,31 +1,52 @@
-# Lab setup (portable, since 2026-10-15)
+# Lab setup
 
-The bench works the same in any location: the laptop brings its own networks and only needs the
-iPhone for internet.
+The Pi's power comes from the Meross MSS620 plug on the laptop's own WiFi network **PhoenixNet**, so
+power control works wherever the laptop is. Two layouts differ only in which wire is the uplink and
+which is the Pi's private LAN.
+
+## Standard lab layout (since 2026-10-17)
 
 ```
- iPhone ──USB-C (Personal Hotspot)──► laptop: enxc6c17d65f469, DHCP 172.20.10.x, the default route
+ lab LAN ──► enp1s0f0 (built-in Ethernet): DHCP 192.168.50.x, the default route
                                        │
-                                       ├─ enp1s0f0 (built-in Ethernet) 10.42.0.1/24 ──switch──► Pi 4 eth0
+ laptop ───────────────────────────────┤
+                                       ├─ enx00e04c680f3e (USB-C Ethernet adapter) 10.42.0.1/24 ──switch──► Pi 4 eth0
+                                       │     NM profile pi-netboot (static, never a default route)
                                        │     netboot server: DHCP, TFTP, NFS root (scripts/netboot-server-up.sh)
                                        │     NAT for 10.42.0.0/24 out of any uplink (scripts/pi-internet-nat.sh)
                                        │
                                        └─ wlp3s0 (WiFi) soft-AP "PhoenixNet" 10.43.0.1/24, 2.4 GHz ch 6, WPA2
-                                             NetworkManager profile phoenix-ap, ipv4.method=shared: DHCP + DNS
-                                             + NAT out of any uplink. Clients: the Meross plug (→ its cloud),
-                                             and the Pi's own WiFi when used.
+                                             NM profile phoenix-ap, ipv4.method=shared: DHCP + DNS + NAT out of
+                                             any uplink. Clients: the Meross plug (→ its cloud), the Pi's WiFi.
 ```
 
-- **Internet:** the iPhone over USB-C with Personal Hotspot on. Whatever holds the default route is
-  the uplink; both NATs follow it, so venue Ethernet or another phone work too.
-- **Pi link:** the laptop's **built-in** Ethernet, static `10.42.0.1/24` in
-  `/etc/netplan/00-installer-config.yaml` (it used to be a DHCP client; the old file is
-  `00-installer-config.yaml.bak-20261015`). `.env.local` has `RPI4B_NETBOOT_IFACE=enp1s0f0`. The old
-  USB adapter profile `pi-netboot` (`enx00e04c680f3e`) is kept with autoconnect off — don't plug that
-  adapter in as well, or two NICs claim 10.42.0.1.
-- **Power:** the Meross MSS620 plug, switched through the Meross cloud by
-  `/home/houp/meross-plug/plug.py` (`scripts/pi_power_on.sh` / `pi_power_off.sh`). It must be paired
-  to the account in `/home/houp/ubuntu-setup/meross` and joined to **PhoenixNet**.
+- `/etc/netplan/00-installer-config.yaml`: `enp1s0f0` DHCP (dhcp4/dhcp6 true).
+- `.env.local`: `RPI4B_NETBOOT_IFACE=enx00e04c680f3e`; NM `pi-netboot` autoconnect **yes**.
+- The netboot dnsmasq binds to the adapter only (`interface=` + `bind-interfaces`), so it never answers
+  on the lab LAN.
+
+## Portable layout (2026-10-15 demo)
+
+```
+ iPhone ──USB-C (Personal Hotspot)──► laptop: enxc6c17d65f469, DHCP 172.20.10.x, the default route
+                                       ├─ enp1s0f0 (built-in Ethernet) 10.42.0.1/24 ──switch──► Pi 4 eth0
+                                       └─ wlp3s0 soft-AP "PhoenixNet" (as above)
+```
+
+- netplan: `enp1s0f0` static `10.42.0.1/24`, `dhcp4: false`, `dhcp6: false`, `link-local: []`.
+- `.env.local`: `RPI4B_NETBOOT_IFACE=enp1s0f0`; NM `pi-netboot` autoconnect **no** (two NICs must never
+  both claim 10.42.0.1).
+
+## Switching between them
+
+1. **Stop the netboot server first**: `./scripts/netboot-server-down.sh`. Its DHCP server must never run on
+   a port that is about to be plugged into someone else's LAN.
+2. Edit `enp1s0f0` in `/etc/netplan/00-installer-config.yaml` (as above), then
+   `sudo netplan generate && sudo nmcli connection reload && sudo nmcli connection up netplan-enp1s0f0`.
+3. Set `RPI4B_NETBOOT_IFACE` in `.env.local` and `sudo nmcli connection modify pi-netboot connection.autoconnect yes|no`.
+4. Move the cables, then `./scripts/netboot-server-up.sh` and `./scripts/demo-preflight.sh`.
+5. After an uplink change, the plug drops its old cloud connection (it was NATed out of the old uplink) and
+   reconnects on its own within a minute; until then the preflight's `plug` line fails.
 
 Check everything with one command — every line must say OK:
 
