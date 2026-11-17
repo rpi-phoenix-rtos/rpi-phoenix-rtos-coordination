@@ -2,6 +2,9 @@
 
 Written 2026-11-01. **Documentation only: no Phoenix code, image or Pi was touched to write this.**
 
+**Addendum 2026-11-17:** items 33–42 and status changes to 1–32 are in
+[pi4-learnings-backlog-addendum-2026-11-17.md](pi4-learnings-backlog-addendum-2026-11-17.md).
+
 In October 2026 a second operating-system port was brought up on the **same Raspberry Pi 4 Model B** (same
 bench, same VL805/GENET/EMMC2/V3D/rpivid hardware, same VideoCore firmware). In two weeks it hit and measured
 a large number of board-level problems. This file turns what it learned into **future tasks for Phoenix**,
