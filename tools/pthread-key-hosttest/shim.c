@@ -388,6 +388,15 @@ int shim_usleep(unsigned int us)
 }
 
 
+/* pthread_do_exit() parks here when a pthread_cancel() from another thread has
+ * claimed the teardown; the kill signal (unblocked) ends the wait, as SIGCANCEL
+ * does on Phoenix */
+unsigned int shim_sleep(unsigned int s)
+{
+	return sleep(s);
+}
+
+
 /*
  * Clocks and futexes, for condition variables and mutexes (sys/ulock.c).
  *
