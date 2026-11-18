@@ -357,10 +357,13 @@ MMU or IOMMU. Each block has its own bus-address view:
   >4 GB boards (and on Compute Module 4 paired with 8 GB Lite SO-DIMM
   variants) they matter.
 
-The B0 silicon stepping has a quirk where PCIe inbound DMA above 3 GB
-silently fails. The C0 stepping fixes it. The safe pattern is to keep
-your packet/transfer buffers in the low DRAM bank (below 0xC0000000) or
-to program the inbound BAR (RC_BAR2) at 0 with size ≥ ARM-visible DRAM.
+PCIe inbound DMA above 3 GiB is not safe for the VL805, even with the inbound
+window (RC_BAR2 at 0, 4 GiB) covering it: measured on a 4 GB Pi 4 (Nov 2026),
+USB reads into buffers above 0xC0000000 came back wrong with no error (866 of
+3392 1 MiB slices), and the next write stopped the controller with an xHCI Host
+System Error. The device tree's `dma-ranges` stops at 3 GiB as well. Keep every
+buffer the VL805 touches below 0xC0000000 (Phoenix: `phoenix-rtos-usb`
+`usb/mem.c`, `USB_DMA_LIMIT`). It shows only under memory pressure.
 
 ### MMU bring-up gotchas
 
