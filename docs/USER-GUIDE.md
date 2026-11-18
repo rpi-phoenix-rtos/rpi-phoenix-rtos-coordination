@@ -62,6 +62,11 @@ After power-on:
    prompt. This is normal.
 3. Type at the prompt with the USB keyboard.
 
+**Default account.** The console needs no login. For SSH ([§8.3](#83-other-network-services)) the
+image has one account, `root`, with the password **`1234`** (the Phoenix-RTOS default). It is
+the same on every image and is not changed at first boot, so treat the Pi as open to anyone on
+its network: start the SSH server only on a network you trust.
+
 ## 3. The shell
 
 The prompt is **psh**, Phoenix's own shell. It is simpler than a Unix shell:
@@ -238,7 +243,7 @@ Run these at the `(psh)%` prompt, with no desktop running:
 | **Quake II** (yQuake2, OpenGL) | `quake2` | 60 fps (vsync), starts on the first level of the demo |
 | **Quake III Arena** (quake3e, OpenGL) | `quake3 +map q3dm1` | 60 fps (vsync, 59.8), a bot deathmatch with an orbiting camera |
 | **vkQuake** (Quake on Vulkan) | `vkquake` | 42 fps (41.8), the start map. **The first frame takes about 75 seconds the first time, ~3 s after that** (see below) |
-| **SuperTuxKart 1.4** (OpenGL ES 3) | `stk` | 12.6 fps at 1920×1080 (~22 fps at 1280×720, see [§6.3](#63-lower-resolution-for-more-fps)) |
+| **SuperTuxKart 1.4** (OpenGL ES 3) | `stk` | ~22 fps (22.3): renders at 1280×720, scaled to the full screen. Native 1080p: `stk --screensize=1920x1080`, 12.6 fps |
 
 The fps figures come from the final image's gate of 2026-09-30 (MIGRATION §7t), with WiFi
 joined. They are measured at the page flip, not read from the game's own counter. A joined
@@ -338,9 +343,9 @@ game-res stk 1280x720 race
   the game, for example `game-res vkq 1280x720 +playdemo demo1`.
 - **Modes:** 1920×1080, 1600×900, 1440×1080, 1280×720, 1024×768, 960×540, 800×600 and
   640×480. A 4:3 mode is shown centred with black bars.
-- **When to use it:** SuperTuxKart is limited by the GPU. At **1280×720 it runs at ~22 fps**
-  (22.3), against 12.6 at 1080p. Below 720p the CPU becomes the limit (960×540:
-  ~24 fps). The Quakes already run at or near 60 fps at 1080p.
+- **When to use it:** SuperTuxKart is limited by the GPU, so `stk` already starts at 1280×720
+  (~22 fps, against 12.6 at 1080p). Below 720p the CPU becomes the limit (960×540: ~24 fps).
+  The Quakes already run at or near 60 fps at 1080p.
 - `export GAME_RES=1280x720` sets a default size for later `game-res` commands.
 
 ---
@@ -669,12 +674,12 @@ fingerprint survives reboots. The server offers ed25519 keys and the curve25519 
 
 - **Log in** as `root` with the password `1234`, the image's default:
   `ssh root@<pi-address>`. Only expose the server on a network you trust.
-- **Key login (SD card image):** root's home is `/`. Every directory up to it must be owned by root
+- **Key login:** root's home is `/`. Every directory up to it must be owned by root
   and not writable by group or others. Directories made on the Pi come out world-writable, so run
   the `chmod` steps: `mkdir /.ssh`, `chmod 700 /.ssh`, put your public key in
   `/.ssh/authorized_keys`, then `chmod 600 /.ssh/authorized_keys`. On a network boot with the NFS
-  root, `/` belongs to the PC user who owns the export, so key login is refused there; use the
-  password.
+  root this works the same way: `scripts/sync-netboot-tree.sh` keeps the export's `/` and `/.ssh`
+  owned by root (it needs passwordless `sudo` on the build host; without it, use the password).
 - **Copying files:** the image has no SFTP server, so OpenSSH 9 and newer need `scp -O`
   (`scp -O file root@<pi>:/tmp/`).
 - To see why a login is refused, run the server in the foreground instead: `/usr/sbin/dropbear -R -F -E`.

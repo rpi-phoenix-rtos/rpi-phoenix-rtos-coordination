@@ -59,7 +59,7 @@ way. Read the rate coreutils `dd` reports instead.
 
 ```
 ./scripts/rebuild-rpi4b-fast.sh --variant sd --with-tests --with-ports --with-showcase
-cp artifacts/rpi4b/rpi4b-sd-2part.img /srv/phoenix-rpi4-nfs-gcc16/sdimage.img
+sudo cp artifacts/rpi4b/rpi4b-sd-2part.img /srv/phoenix-rpi4-nfs-gcc16/sdimage.img   # "/" of the export is root-owned (SSH key login)
 ```
 
 ⚠ `--variant sd` **overwrites the TFTP `loader.disk`** with an SD blob that has no `nfs;/`, so

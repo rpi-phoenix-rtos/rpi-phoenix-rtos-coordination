@@ -86,13 +86,30 @@ printf '  src: %s\n  dst: %s\n' "$src" "$export_dir"
 # /etc/wifi.conf holds the lab's WiFi credentials, which live ONLY on the export
 # (a built rootfs never has one, see check-rootfs-complete.sh); excluding it keeps
 # SYNC_DELETE=1 from deleting it.
-rsync -a --no-owner --no-group "${delete_args[@]+"${delete_args[@]}"}" \
+# The export's own top directory is the Pi's "/", root's home: dropbear accepts
+# /.ssh/authorized_keys only when "/" and /.ssh belong to root (as on an SD image), so
+# keep those two root-owned (below) and sync through sudo when it is available, since
+# an unprivileged rsync cannot set the times and mode of a root-owned "/".
+sudo_rsync=()
+if sudo -n true 2>/dev/null; then
+	sudo_rsync=(sudo -n)
+fi
+"${sudo_rsync[@]+"${sudo_rsync[@]}"}" rsync -a --no-owner --no-group "${delete_args[@]+"${delete_args[@]}"}" \
 	--exclude=/dev \
 	--exclude=/proc \
 	--exclude=/tmp \
 	--exclude=/mnt \
 	--exclude=/etc/wifi.conf \
+	--exclude=/.ssh \
 	"$src/" "$export_dir/"
+
+if [ "${#sudo_rsync[@]}" -gt 0 ]; then
+	sudo -n chown root:root "$export_dir"
+	sudo -n chmod 755 "$export_dir"
+	sudo -n install -d -o root -g root -m 700 "$export_dir/.ssh"
+else
+	printf 'sync-netboot-tree.sh: no passwordless sudo: "/" stays owned by %s, so SSH key login is refused on the NFS root\n' "$(id -un)"
+fi
 
 # The base build produces no scalable TTF / fontconfig config / cache, so the X11
 # desktop (wmaker via WINGs, xterm, dillo) would have no Xft fonts on a fresh
