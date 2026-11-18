@@ -5,7 +5,7 @@ glibc — return value, every parsed value, and the `%n` position — over 1564 
 integer, float, string and scanset conversions. Runs instantly, no Pi cycle.
 
 ```
-make run      # expect: diffs=0 known=87
+make run      # expect: diffs=0 known=35 (87 before the 2026-11-18 upstream scanf rewrite)
 ```
 
 The numeric leaves (`strtod`, `strtoll`, …) are deliberately left bound to glibc, so a
@@ -38,7 +38,11 @@ lets its width run unbounded. So `p - buf` was zero and three things broke:
 Also a missing `<stddef.h>` (`ptrdiff_t`, used by `%t`), invisible to the target build because
 another header pulls it in there.
 
-## The 87 classified divergences — measured, understood, NOT changed
+## The classified divergences — measured, understood, NOT changed
+
+**Update 2026-11-18:** upstream v3.4.0 rewrote scanf (stream read on demand, suppressed
+conversions, return value on matching failure); the count fell from 87 to 35. The analysis below
+is from before the rewrite; re-classify the remaining 35 when this harness is next touched.
 
 **EOF vs 0 (84).** `sscanf("-", "%d", &v)` gives `-1` here and `0` in glibc; `sscanf("42",
 "%*d%d", &v)` gives `0` here and `-1` in glibc. C17 7.21.6.2 returns EOF only when an input
