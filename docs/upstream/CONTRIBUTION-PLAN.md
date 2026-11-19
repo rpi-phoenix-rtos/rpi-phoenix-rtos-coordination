@@ -481,22 +481,11 @@ File these in **`phoenix-rtos/phoenix-rtos-project`**. Upstream commits referenc
 - **Suggested fix:** on owner exit, fail every received and queued request with `-EINVAL`. Allocate rids in rotation per port. Fix the two reference-count bugs. Our series is `ac5ee1a6`, `9ce228c7`, `ee437693` and `3adc9950`. It needs the vfork-lifetime change (Issue 3b) and a NOMMU build check of `msg-nommu.c`.
 - **3b, same area (separate issue).** In the vfork window the child's kernel stack *is* the parent's, and an asynchronous death frees a running kernel stack and destroys a borrowed map (K05). `thread_t.execkstack` is never initialised in `proc_threadCreate`, which silently disables the kernel-stack canary for every thread that never vforks. A dying sender also cannot abandon a request a server has received (K16).
 
-### Issue 4: `sigreturn` and the aarch64 signal frame (send privately, not as a public issue)
+### Issue 4: signal-return hardening (aarch64) — to be reported privately
 
-- **Affected code:** `phoenix-rtos-kernel/syscalls.c` (`sigreturn`), `hal/aarch64/cpu.c` (`hal_cpuPushSignal`, context restore), `hal/aarch64/_exceptions.S` (`hal_jmp`), and `proc/threads.c` / `vm/map.c` (fault delivery).
-- **Root cause:**
-  - **(a) Unchecked context pointer.** Upstream `syscalls_sigreturn()` takes `ctx` from the user stack under `/* TODO: check if return address belongs to user mapped memory */`. `hal_cpuSigreturn()` then writes pc, sp and psr through that pointer, so a process chooses where the kernel writes. An EL1 `psr` is detected and `proc_kill()` is called, but `proc_longjmp(ctx)` still runs afterwards. The `psr` is taken whole, with DAIF bits included.
-  - **(b) Kernel data in the signal frame.** Upstream `hal_cpuPushSignal()` `memcpy`s the whole kernel exception frame onto the user stack. That frame holds `savesp` (a kernel stack address) and the full `CPACR_EL1`. While the FPU is trapped it also holds stale FP registers, because the exception entry does not save them. (Our fix also covers a `uc_stack` field, but that field is fork-only.)
-  - **(c) Kernel registers left at EL0 entry.** `hal_jmp` enters EL0 with x0–x30 as the kernel left them. Fault dumps show kernel pointers and `ESR_EL1`/`CPACR_EL1` values in x17, x26–x28 and fp.
-  - **(d) Endless re-fault.** A fault whose signal is blocked or ignored re-faults forever. This matches the upstream `FIXME` in `map_pageFault`: "the process should be terminated to avoid exception dump loop".
-- **Reproducer:** our `faultsig` test group (7 cases) and `kernelhard` (`kh_sigframe`) in `phoenix-rtos-tests` (`f8ad4dc`, `a781ea9`, `b6e640a`, `8855cd9`).
-- **Suggested fix:**
-  - copy the context into the kernel and validate it before resuming;
-  - force EL0 and mask privileged `psr` bits;
-  - build the frame from a zeroed kernel buffer;
-  - zero x0–x30 in `hal_jmp`;
-  - terminate on a synchronous fault whose signal is blocked or ignored.
-  - Our commits: `7158b7ad`, `9276ba68`, `2f5e1e62`, `3ab815fe`, `d36f9967`. All but `3ab815fe` conflict with upstream and would be re-derived.
+A security-relevant defect in the signal-return path. Details are kept out of this public document and will be
+shared with the maintainers privately, through the contact the owner establishes. The fork's fix is kernel
+`7158b7ad` + `9276ba68` + `2f5e1e62`; the test is `libc/signal/faultsig.c` (`sigreturn_*` cases).
 
 ### Issue 5: a read that crosses the end of a storage device returns `-EINVAL` (zynq drivers)
 
