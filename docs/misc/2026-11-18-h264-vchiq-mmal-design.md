@@ -261,3 +261,7 @@ These change the design's operating rules, not its structure:
 5. **Encoder:** `h264_mmal`'s `initial_qp > 0` silently disables rate control.
 
 Tracked as task 48 of [the 2026-11-20 learnings addendum](../inprogress/pi4-learnings-backlog-addendum-2026-11-20.md).
+
+More from the same source (relayed later on 2026-11-20): VCHIQ slot memory must be below 1 GiB; hold the
+firmware's H.264 clock at 500 MHz while decoding (release after; idle 250 MHz); keep MMAL zero-copy off at first
+and copy out of VideoCore buffers; steps 1-3 (device node, libmmal, decoder) took ~4 days on their side.

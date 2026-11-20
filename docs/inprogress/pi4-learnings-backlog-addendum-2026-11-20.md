@@ -26,6 +26,7 @@ lists as "not started: the players"; 47 is a cheap browser A/B; 48 feeds task 36
 | 47 | Medium | Build Skia (WPE's CPU raster) with clang and compare | S |
 | 48 | — | H.264 via VCHIQ + MMAL: five operational limits (folded into task 36) | reference |
 | 49 | Low | Bench: an agent's ssh helper must check it reached its own Pi session | S |
+| 50-57 | — | Part 2: suggestions for our open issues D5, C18, P3, P1, C17, C5, L36, F2 (table at the end) | per item |
 
 ## Medium
 
@@ -137,3 +138,21 @@ in [the L36 design note](../misc/2026-11-18-h264-vchiq-mmal-design.md) §"Field 
    with 0-11 of ~1500 dropped at ~2 cores: choose by pixel rate (above 1080p at 45 fps → CPU).
 4. A decode and an encode at once need `gpu_mem=128`.
 5. `h264_mmal`'s `initial_qp > 0` silently disables the encoder's rate control.
+
+## Part 2: suggestions for our open issues (relayed 2026-11-20 late)
+
+The same port matched our `docs/KNOWN-ISSUES.md` against what worked on its side. These are suggestions, each to
+be checked against our source before acting; "checked" below means read in our tree on 2026-11-20.
+
+| # | Our issue | Suggestion | Status in our tree |
+|---|---|---|---|
+| 50 | D5 (VL805 `0xdead` window, waits) | (1) read vendor and the VL805 firmware version at config **0x50**; (2) non-zero → skip `NOTIFY_XHCI_RESET` (no reset, no race, no wait); (3) else notify, then poll the vendor ID (5 ms × 60) instead of a fixed sleep; (4) **after a notify, reprogram the root port's inbound window**, which the firmware's handling of the request can disturb | ✅ checked: (1)-(3) are already in `usb/xhci/bcm2711-pcie.c:914-964` (USB-FIX-2 skip on 0x50, vendor-ID poll capped at 300 ms). (4) not done; and the late-`mmap`-reads-`0xdead` pmap workaround may come from a later notify or reset: find out whether a second notify ever happens (log every notify) |
+| 51 | C18 (labwc cannot import ffplay's dma-buf after a resize) | The shared buffer's lifetime follows its **references**, not its exporter: export = an object that holds a BO reference, bound to the fd; import = a new BO reference from that object; the exporter's withdrawal drops only its own reference; free at 0. Two instances on their side: picture memory back to a pool while another process still mapped it; a process killed during async DMA freeing memory before its fds closed (release DMA and import references at process death first) | not checked: does `gpu/rpi4-v3d-async` resolve an import through the exporter's (owner, handle) table rather than through the object the fd references? |
+| 52 | P3 (`dc zva` disabled in `hal_memset`) | Arm Optimized Routines' memset (MIT OR Apache-2.0 WITH LLVM-exception) checks DCZID_EL0 at run time and uses `dc zva` for large zeroing; stable on this Pi across their releases. The one hazard: `dc zva` on Device or non-cacheable memory faults or hangs. Split: AOR for normal memory; a plain store loop for MMIO and uncached DMA buffers | not checked: grep `hal_memset` callers on DMA/uncached/device mappings first (fits our recorded hang) |
+| 53 | P1 (2/8 GB boards mis-mapped) | The firmware patches the DTB `/memory` node with the real banks (e.g. 0-0x3b400000, 0x40000000-0xfc000000, 0x100000000+ on 4/8 GB): plo can take the map from there. Mailbox GET_ARM_MEMORY gives only the first bank, GET_VC_MEMORY the carve-out. (Their port has also run only a 4 GB board) | not checked |
+| 54 | C17 (OOM leaves the desktop unusable) | Graded low-memory states (normal / note / warning / critical) from free pages and free memory; every cache registers a handler that shrinks at each step (block cache, file cache, VM caches, slab), plus a small reserve so teardown and close messages still get memory. For us: a kernel low-memory level that servers subscribe to (V3D BO pool: trim harder at "warning"; shmsrv; the file cache) | design idea |
+| 55 | C5 (PWM DMA parked waiting for DREQ) | Read the DTB's `brcm,dma-channel-mask` before claiming channel 5 and refuse if the firmware has not freed it; if the firmware used channel 5 on some boots, a parked channel would look exactly like ours | not checked; our `DMA_CHAN 5` has a "revisit via the firmware mask" note |
+| 56 | L36 (H.264 via VCHIQ + MMAL) | Beyond task 48: VCHIQ slot memory below 1 GiB; raise the firmware's H.264 clock while decoding (500 MHz, release after; idle 250); MMAL zero-copy off at first (copy out); the one-decoder lock and NDEBUG from day one. Steps 1-3 (device node, libmmal, decoder) took them ~4 days | design input (also in the L36 note) |
+| 57 | F2 (no Bluetooth host stack) | NetBSD's `sys/netbt` (HCI, L2CAP, RFCOMM, SCO, `bthidev` for keyboards/mice; BSD-2) as a BSD-licensed host stack on top of our working HCI transport | idea |
+| — | F1 (WiFi throughput) | Calibration: 49 up / 46 down Mbit/s (~6 MB/s) on the same 2.4 GHz access point; interrupt-moved data blocks cut CPU per MiB by a third without changing the rate. The AP and band matter more than further bus work | matches our 2026-11-20 A/B (5.1 MB/s, CPU −50 %) |
+| — | P7 (no UTF-8 in libphoenix) | musl's `mbrtowc`/`wcrtomb`/`wcwidth` (MIT) as the compact reference | idea |
