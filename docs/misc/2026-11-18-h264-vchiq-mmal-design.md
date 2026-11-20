@@ -245,3 +245,19 @@ Total: about 3-4 weeks, L as in the addendum.
 - **R6. Clock and heat.** 500 MHz raises SoC power. Watch `/dev/throttled` in the 30-minute run. Whether the firmware
   lowers the rate by itself is not known.
 - **Q1.** Do 2 extra output buffers survive seeks and 1080p60 bursts? Measure in checkpoint 3.
+
+## Field notes 2026-11-20 (measured on the same board by the other OS port's VCHIQ + MMAL work)
+
+These change the design's operating rules, not its structure:
+
+1. **Build VCOS with `NDEBUG`.** Otherwise `vcos_assert` calls `abort()` inside the client process.
+2. **One H.264 decoder system-wide.** At the default `gpu_mem=76` one 1080p decoder fits; a second fails with
+   `ENOSPC`, and its error flood can wedge the firmware's MMAL service until reboot. Serialise with a file lock and
+   fall back to the software decoder.
+3. **Choose by pixel rate.** The firmware decoder manages ~69 fps at 1080p, so 1080p60 dropped 216-538 frames,
+   while the software decoder played 1080p60 with 0-11 of ~1500 dropped at ~2 cores. Rule: above 1080p at 45 fps,
+   decode on the CPU.
+4. **`gpu_mem=128`** is needed for a decode and an encode at once.
+5. **Encoder:** `h264_mmal`'s `initial_qp > 0` silently disables rate control.
+
+Tracked as task 48 of [the 2026-11-20 learnings addendum](../inprogress/pi4-learnings-backlog-addendum-2026-11-20.md).
