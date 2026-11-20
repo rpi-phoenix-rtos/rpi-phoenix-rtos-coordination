@@ -65,13 +65,13 @@ Effort is the work to prepare the PR, not to write the fix:
 
 ## 3. Summary
 
-- **131 candidates examined.** 14 are already fixed or superseded upstream (one of them, `_SC_OPEN_MAX`, is a known upstream issue), and 7 are fork-only code. That leaves **110 live candidates**:
+- **137 candidates examined** (131 on 2026-11-19, plus F14–F18 and L48 on 2026-11-20). 14 are already fixed or superseded upstream (one of them, `_SC_OPEN_MAX`, is a known upstream issue), and 7 are fork-only code. That leaves **116 live candidates**:
 
   | kind | count |
   |---|---|
-  | a: generic bug fix | 78 (one of them, K34, also has an aarch64 half) |
+  | a: generic bug fix | 83 (one of them, K34, also has an aarch64 half) |
   | b: aarch64-generic fix | 5 |
-  | c: enhancement | 20 |
+  | c: enhancement | 21 |
   | d: report only | 7 |
 
 - **39 apply cleanly** to upstream `master` and compile on aarch64. A few more need only a trivial conflict resolved: K35 `hal_jmp`, whose hand-resolved copy compiles, and D01 libtty. Most of the ext2 series (29 of 36 commits) also applies, once the one commit upstream already has and the commits that depend on F01 are left out (section 6).
@@ -270,6 +270,7 @@ Ten PRs, each verified on 2026-11-19 to cherry-pick cleanly onto upstream `maste
 | L45 | `pthread_join` double unlock; retire race; detached cancel leak; sem deadline | a | `ad2af81`, `1a7753d` | open | conflicts | host tests | 3 | M |
 | L46 | libm replaced with FreeBSD msun for the transcendental functions | c | `6bb0bdc`, `6bf27ab` | open | conflicts (many fork libm files) | ≤ 2.75 ULP vs MPFR | discussion | L |
 | L47 | Far-future deadline of an unnamed semaphore | a | `203a347` | fork-only file (`pthread/sem_unnamed.c`) | n/a | — | not applicable | — |
+| L48 | Mount table: `MOUNTED` = `/dev/mtab` log on devfs, `mount_record()` for self-mounting servers, `getmntent_r()` fixes (reentrant, malformed lines skipped, octal escapes) — with filesystems `d23e75e`, devices `5658de78`, utils `4bed126` (psh `df`/`mount`), tests `f7ee0b4` | c | `ad42f63` | upstream has no mount table and an empty `<mntent.h>`; `mntent.c` is fork-added | new files; not yet tried | Pi 2026-11-20: `df`, `mount`, `cat /dev/mtab` correct on the NFS root; `test-libc-misc` 247/0 | discussion (design proposal first) | M |
 
 ### phoenix-rtos-filesystems
 
@@ -288,6 +289,11 @@ Ten PRs, each verified on 2026-11-19 to cherry-pick cleanly onto upstream `maste
 | F11 | dummyfs `link`/`unlink` timestamps | a | `8cf0a25` | open | clean; compiles | test `stat_dir_times` (tests `99b024e`, registration conflict) | 2 | S |
 | F12 | libnfs 6.0.2 `readlink` phantom success | d | `fc2f62b` | fork-only NFS server; the defect is in libnfs | n/a | — | report to libnfs | — |
 | F13 | ext2: unmount deleted cached files; unlink did not free blocks; hole read as the superblock | a | `269306a`, `8a35d91`, `62d513a` | open | clean; compiles | host harness | 2 (with F04) | S |
+| F14 | ext2: reading a hole allocated indirect blocks (lookup-only `ext2_block_find()`) | a | `43c00d7` | open | conflicts in `block.c`/`file.c`: sits on the F04 series | host `holes.c`, both block sizes, e2fsck clean | 3 (after F04) | S |
+| F15 | ext2: a failed indirect-slot fill was written back to block 0 (boot block / superblock) | a | `28e26d7` | open | applies cleanly alone (2026-11-20 trial) | host `enospc.c`: e2fsck "Bad magic number" after ENOSPC + power cut, clean after | 1 | S |
+| F16 | ext2: partial `write()` on ENOSPC returned `-ENOSPC`, left `i_size`/`i_blocks`/bitmap inconsistent | a | `9e1ea4e` | open | conflicts in `block.c`/`file.c`: needs F14 | host `enospc.c`, 5 write sizes × 2 block sizes × unmount/power cut | 3 (after F14) | M |
+| F17 | ext2: inode written before its new indirect blocks (crash ordering) | a | `13f4808` | open | conflicts in `obj.c`: sits on F08/F10 | prefix-replay of one write's device writes: 2/7 cut points bad → 0 | 3 (with F10) | S |
+| F18 | ext2: failed symlink create left a dangling directory entry | a | `6c8c117` | open | applies cleanly alone (2026-11-20 trial) | host harness, e2fsck "deleted/unused inode" → clean | 2 | S |
 
 ### phoenix-rtos-corelibs
 
