@@ -694,7 +694,7 @@ declaration with no definition — i.e. they were previously *link errors or sil
 | wide char / wctype | `wchar/wchar.c` (+555) and a new `wctype/` (`0cb9f72`, `e29c840`, `9128c5d`, `1f10581`, `a3e976c`, `b15587a`, `54df17b`): the C99 wide string/memory set, restartable `mbsinit`/`mbrtowc`/`wcrtomb`/`mbsrtowcs`/`wcsrtombs`, `wcwidth`/`wcswidth`/`wcscoll`/`wctob`/`wcsdup`, `wcspbrk`/`wcsspn`/`wcscspn`/`wcsstr`/`wcstok`, `wcsto{l,ul,ll,ull,d,f,ld}`, and the whole `<wctype.h>` `isw*`/`tow*`/`wctype`/`wctrans` family (C/POSIX locale) | bash multibyte, ncurses, CPython (needs the full `wcsto*` set) |
 | locale | `<langinfo.h>` + `nl_langinfo()` (`7bf090f`) | how ncurses/mc/vim decide multibyte mode |
 | time | `strptime()` implemented (`855dfc6`, was a stub returning NULL, so every date parse silently failed); `strftime` rewritten for POSIX flag/width syntax plus `%C %h %D %F %I %p %R %r %X %u %U %W %x %z %n %t` and ISO-week `%V %g %G` (`cc5cfbb`, `408832c` — closes upstream #351); `times()` returns real elapsed ticks (`b6f5986`) | shells, log/HTTP-date parsers, coreutils `date` |
-| fs / process info | `statfs()`/`fstatfs()` + `<sys/statfs.h>`/`<sys/vfs.h>` (`676234a`); `getmntent` family + `<mntent.h>` (`29f5373`); `RLIMIT_*` ids and a `getrlimit` that fills the out-param (`3b45a15`); `mlock`/`munlock`/`mlockall`/`munlockall` (`ec9afd0`); `getrusage` out-param defined | coreutils `df`/`stat -f`/`sort` configure and run; OpenSSL's secure heap |
+| fs / process info | `statfs()`/`fstatfs()` + `<sys/statfs.h>`/`<sys/vfs.h>` (`676234a`); `getmntent` family + `<mntent.h>` (`29f5373`), and since 2026-11-20 a mount table for it to read: `MOUNTED` is `/dev/mtab`, a log on devfs that `mount()` and the self-mounting servers (`mount_record()`: the NFS and SD root servers, dummyfs) append to, read back as the mounts in effect; `getmntent_r()` made reentrant, skips malformed lines, decodes octal escapes (`ad42f63`; psh `df`/`mount` in utils `4bed126`); `RLIMIT_*` ids and a `getrlimit` that fills the out-param (`3b45a15`); `mlock`/`munlock`/`mlockall`/`munlockall` (`ec9afd0`); `getrusage` out-param defined | coreutils `df`/`stat -f`/`sort` configure and run; OpenSSL's secure heap |
 | randomness | `getrandom()`/`getentropy()` + `<sys/random.h>` (`40053fd`), drawn from `/dev/urandom` | libsodium, recent OpenSSL, language runtimes |
 | string / signal | `memccpy`, `stpncpy`, `strtok_r`, `psignal` (`7a1cd73`); `memmem`, `getsubopt` (`cbe4946`); `strerror()` returns POSIX text instead of errno *macro names* (`e71331d`, new `string/errno.desc`); `siginterrupt` (`ad494b5`) | ~20 previously `TEST_IGNORE`d cases in upstream's own string/signal suites |
 | stdio / scanf | POSIX `%m` allocation modifier for `%ms`/`%m[`/`%mc` (`a2731ac`); BSD `setlinebuf` | |
@@ -1130,28 +1130,32 @@ Pi 4 drivers whose *mechanism* generalises even where the register does not.
 Added 2026-11-18/19. The first four are in shared code and are shortlist rows; the xHCI items are in
 `usb/xhci/`, which this fork added (it is not in upstream `devices`), so they concern this driver only.
 
-- ★ `umass` `cf83ee6f` + libusb `00e9ac4` *(branch)* — retries that end in success with no data, no
+- ★ `umass` `cf83ee6f` + libusb `00e9ac4` — retries that end in success with no data, no
   Bulk-Only reset recovery, `usb_clearFeatureHalt()` sent to the device. ★ 55.
 - ★ `usb/hub.c` `182d146` — suspend and over-current port changes never acknowledged. ★ 56.
 - ★ `umass` `8aac80e8` — a disk without a partition table got no node. ★ 57.
-- `usb/mem.c` `716f924` *(branch)* — a DMA page pool reserved at USB start. On the Pi every USB DMA
+- `usb/mem.c` `716f924` — a DMA page pool reserved at USB start. On the Pi every USB DMA
   block must lie below 3 GiB (PCIe DMA above that is not safe for the VL805), and under memory pressure there was none
   left: umass writes failed with `EIO` ("no DMA memory below 0xc0000000"), though no sector was wrong.
   Blocks of a page or more now come from 256 KiB segments with a page bitmap (512 KiB reserved on the
   Pi) instead of a fresh contiguous `mmap()` and `munmap()` per transfer. The mechanism is generic, but
   it is opt-in: a target that reserves nothing keeps the old behaviour exactly. Host model: 20 000
-  transfer pairs under full low-memory pressure, 0 new low allocations; Pi pending.
-- `xhci.c` `938c1690` *(branch)* — CPU 0 took ~27 000 timer interrupts a second on an idle board. The
+  transfer pairs under full low-memory pressure, 0 new low allocations. Pi, 2026-11-20, with free memory only
+  above 3 GiB (`test-usb-dmapressure -H`, 927 MiB free there): 1 GiB written and read back, 0 bad sectors,
+  0 I/O errors (before: `EIO`).
+- `xhci.c` `938c1690` — CPU 0 took ~27 000 timer interrupts a second on an idle board. The
   root-hub thread polled each idle interrupt-IN endpoint with a 1 ms wait, which since a 2026-09 change
   fast-polls in 20 µs steps, so two idle HID pipes woke a thread ~25 000 times a second, and only CPU 0
-  serves sleep deadlines. A zero timeout now looks once and returns. Found with the per-CPU heartbeat;
-  Pi A/B pending.
-- `xhci.c` `3cb169aa` *(branch)* — no endpoint recovery. A STALL or transaction error halts an endpoint
+  serves sleep deadlines. A zero timeout now looks once and returns. Found with the per-CPU heartbeat.
+  Pi, 20 boots with the heartbeat build (2026-11-20): CPU 0 **27 231 → 3 180** timer interrupts a second,
+  CPUs 1–3 ~1 001; keyboard and mouse enumerate on every boot.
+- `xhci.c` `3cb169aa` — no endpoint recovery. A STALL or transaction error halts an endpoint
   (xHCI §4.10.2) and it was never reset, so every later transfer on it waited out its 5 s timeout; a
   timed-out transfer stayed on the ring while its caller freed the buffer; and `xhci_pipeDestroy` freed
   a ring the controller could still be fetching from. Now Reset/Stop Endpoint and Set TR Dequeue
   Pointer (§4.6.8–4.6.10), the host data toggle reset with ClearFeature(HALT), and safe teardown.
-  Host-tested; Pi pending.
+  Host-tested; in every Pi image since 2026-11-20 (20/20 boots, 1 GiB USB runs) without a recovery
+  being needed, so the recovery path itself has not been provoked on hardware.
 - `xhci.c` `45251807`, `9f75eacc` — a root-port device that went away without a connect-status change
   was never reported, and a disconnected device's slot was never released (8 entries, so a few replug
   cycles ran out). On the Pi since 2026-11-18 (20/20 boots); unplug cycles not specifically tested.
@@ -1329,6 +1333,9 @@ Added 2026-11-18/19. The first four are in shared code and are shortlist rows; t
 | WiFi join reliability | first-join failures 4/7 → **0/9**; a failed firmware download recovers instead of leaving WiFi dead | The chip drops its HT backplane clock while the host is idle, and the join's first control frame (the `event_msgs` iovar) then failed at the SDIO transport, so the firmware was never asked for join events. rpi4-wifi now wakes the chip (KSO until DEVON, then HT_AVAIL_REQ) before a join and re-sends a control frame once after a wake, as brcmfmac requests the clock before every control frame (devices `d73803e`). Separately, a firmware download that fails part-way (CMD53 data-phase error) is now retried with a WL_REG_ON power cycle, up to three times (`9c4267e`); proven by a forced retry and by a natural failure it recovered. |
 | VideoCore core clock | SuperTuxKart 7.43 → **8.30 fps** (+12 %) | `config.txt` pinned `core_freq=250` since April as a UART-stability workaround that had stopped applying once the PL011 console moved to its own 48 MHz clock. 500 MHz is the Pi 4 default (what Raspberry Pi OS runs); it clocks the fabric the V3D, HVS and DMA traffic cross. `force_turbo=1` stays so the Bluetooth mini-UART divisor (computed once from `GET_CLOCK_RATE`) holds. rpi4-wifi now asks the firmware for the EMMC clock instead of assuming 250 MHz — it reads 250 MHz at core 500 as well, so the old constant was right by coincidence. Gate: BT, WiFi, audio, 0 exceptions, STK 8.25/8.30 (project `e70e124`, devices `27db916`). |
 | WiFi | RX and TX both to low single-digit MB/s | SDPCM glom de-aggregation (below) plus RX poll cadence. **Do not quote a single figure:** the fork's own `fcb4311` retracts its earlier numbers after identical code re-measured 2.6× apart. |
+| WiFi data blocks | 2.4 GHz, 72 Mbit/s, one boot, 3 × 8 MiB each way per setting: TX 4.94 → **5.10**, RX 4.81 → **5.07** MB/s, `rpi4-wifi` CPU samples **−50 %** (2385 → 1204), system idle 93.2 → 95.5 % | Data blocks of 256 bytes and more are moved by an interrupt handler while the caller sleeps, instead of a polled loop on the controller (`pioirq`, devices `5692a863`, `a97a7b9e`, `43f3bd9e`), and a received frame over 512 bytes is read as whole 512-byte blocks plus a byte-mode tail instead of 512-byte byte-mode chunks (`rxblk`, `1805c493`; `pioirqmin`, `ab38a179`, keeps short transfers polled). The interrupt path alone cost receive ~9 %: with byte-mode chunks it slept and woke once per 512 bytes. The three settings (F2 block size 512, `pioirq 1`, `rxblk 1`) become the defaults in `ea2524f3` *(branch `wifi-default-bi`, Pi gate pending)*; each stays selectable at boot and at run time. |
+| HEVC 1080p decode (hardware block) | 32.5 → **34.7 fps** (30.75 → 28.82 ms/frame), bit-exact (`mismatches=0`, 3634 frames × 3 runs per arm) | Phase 2 of a picture (the reconstruction, on the block) now runs while the decoder parses the next picture, instead of the decoder waiting for it (ports `56dee10`, `b50718a`, `c55f982`). Opt-in for now: `FFMPEG_RPIVID_PIPELINE=1`. |
+| ext2 file writes on the SD card | `dd conv=fsync`: 1 MiB writes **1.3 → 17.3 MB/s**, 4 KiB 416 → 535 kB/s | The allocator skips full block groups by their descriptor (★ 53) and a write's metadata reaches the card once per call (★ 54). |
 
 WiFi throughput is worth a note because the mechanism is clear even where the numbers are not. The
 firmware bundles received frames into superframes on SDPCM channel 3 and the driver had no
@@ -1338,7 +1345,10 @@ dump after three guesses failed. What remains is not the radio: the idle RX poll
 ceiling (an N µs sleep caps you near one frame per N µs), and each frame costs a message round trip plus
 a backplane window setup plus four PIO SDIO transfers. An event-driven read and F2 DMA are the named
 next levers. Two other measured findings were kept but explicitly *disproved* as the cause: SDPCM credit
-windows never closed (`blocked=0`), and byte-mode RX is 5× faster than block mode here.
+windows never closed (`blocked=0`), and byte-mode RX is 5× faster than block mode here. (↩ That last
+finding no longer holds: with 512-byte F2 blocks, reading a frame's whole blocks in block mode and only
+the tail in byte mode is faster than byte mode alone, RX 5.28 against 4.81 MB/s polled, 2026-11-20; see
+the "WiFi data blocks" row.)
 
 One bound on all of the storage numbers, because it says where *not* to optimise: **NFS is
 latency-bound, not bandwidth-bound, and the floor is not a Phoenix defect.** `tools/nfs-bench`
@@ -1887,8 +1897,10 @@ rather than as bugs.
   now the reference implementation, the conformance harness and the oracle of the port's host
   test, and displays nothing.
 - **H.264 is walled, deliberately.** There is no directly-addressable H.264 register block on
-  BCM2711; H.264 decode lives on the VideoCore firmware behind VCHIQ + MMAL. Scoped and
-  banked, not attempted.
+  BCM2711; H.264 decode lives on the VideoCore firmware behind VCHIQ + MMAL. A design for that
+  route (BSD-licensed VCHIQ from FreeBSD, the MMAL subset of Broadcom's userland, an FFmpeg
+  `h264_mmal` decoder) was written on 2026-11-18 ([design](misc/2026-11-18-h264-vchiq-mmal-design.md));
+  not implemented.
 - **Decode rate of the standalone tool, measured 2026-09-09.** A real 1080p H.265 phone clip
   (1058 frames) played on `/dev/fb0` (the tool's display path until 2026-10-02) at **21.7 fps,
   0 faults**. The decoder is not the limit: ~41.5 ms of each 46 ms frame
@@ -2174,4 +2186,4 @@ plo/                       aarch64 boot path
 ```
 
 *Generated 2026-09-08 from `origin/master..HEAD` across 14 repos. Scope figures, the shortlist and
-its upstream status were last updated 2026-11-19, against upstream `master` after v3.4.0.*
+its upstream status were last updated 2026-11-20, against upstream `master` after v3.4.0.*

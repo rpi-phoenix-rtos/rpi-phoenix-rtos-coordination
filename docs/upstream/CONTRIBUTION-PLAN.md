@@ -1,6 +1,6 @@
 # Upstream contribution plan
 
-- **Status:** draft for the owner, 2026-11-19. Nothing has been sent or pushed.
+- **Status:** draft for the owner, 2026-11-19; updated 2026-11-20 (F14–F18 and L48 added, checked against upstream filesystems `52ae003`; U07 Pi evidence). Nothing has been sent or pushed: per the owner, nothing goes to the official repos until the owner has contacted the project and approves.
 - **Scope:** the fork's general-purpose changes, meaning code that is not Pi 4-specific: arch-independent, or aarch64-generic (also useful on zynqmp, for example). Full Pi 4 support stays in the fork and is out of scope here.
 - **Source material:** [PHOENIX-RTOS-RPI4-CHANGES.md](../PHOENIX-RTOS-RPI4-CHANGES.md) (its "★ Start here" table and the per-area "General bug fixes" sections), and the fixes made from 2026-10-09 to 11-19 that the changes doc does not list yet.
 
@@ -324,7 +324,7 @@ Ten PRs, each verified on 2026-11-19 to cherry-pick cleanly onto upstream `maste
 | U04 | usb/dev: control buffer overflow into the DMA pool chunk header | a | `7259b26` | open | clean; compiles | pool corruption | 2 | S |
 | U05 | usb/dev: unbounded `sprintf` of the device symlink path | a | `e0911ce` | open | clean; compiles | — | 2 | S |
 | U06 | libusb `usb_clearFeatureHalt()` addressed to the device, not the endpoint | a | `00e9ac4` | open | clean; compiles | device STALLs; needed by D03 | 1 | S |
-| U07 | usb/mem: DMA page pool reserved up front | c | `716f924` | open | conflicts: depends on Pi "below 3 GiB" change: split | — | 3 | M |
+| U07 | usb/mem: DMA page pool reserved up front | c | `716f924` | open | conflicts: depends on Pi "below 3 GiB" change: split | host model 20 000 transfer pairs, 0 new low allocations; Pi 2026-11-20: 1 GiB with free memory only above 3 GiB, 0 bad, 0 I/O errors (was `EIO`) | 3 | M |
 | U08 | usb hub: acknowledge suspend and over-current changes | a | `182d146` | open | clean; compiles | port re-reported every 100 ms | 2 | S |
 
 ### phoenix-rtos-posixsrv
