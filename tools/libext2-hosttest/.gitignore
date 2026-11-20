@@ -18,3 +18,5 @@ tailtest
 uaf
 dirtime
 rmdirfull
+enospc
+holes

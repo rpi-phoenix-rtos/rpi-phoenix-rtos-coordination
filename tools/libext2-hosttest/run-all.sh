@@ -147,6 +147,12 @@ for b in 1024 4096; do
 	done
 done
 
+# Disk full and sparse files: short writes on ENOSPC, no stray block-0 writes,
+# hole reads that never allocate, indirect blocks written before the inode.
+echo "=== ENOSPC + holes ==="
+"$here/run-enospc.sh" | grep -E "FAIL|rc=[1-9]|e2fsck=[1-9]|ALL GREEN" | head -20
+[ "${PIPESTATUS[0]}" -eq 0 ] || fails=1
+
 echo
 [ "$fails" -eq 0 ] && echo "ALL GREEN" || echo "FAILURES -- see above"
 exit "$fails"
