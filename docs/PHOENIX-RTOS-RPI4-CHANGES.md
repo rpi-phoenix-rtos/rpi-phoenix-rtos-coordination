@@ -998,12 +998,16 @@ check on the translate object (`translate_generic_create` can fail, and aarch64 
 `translate_sse` to fall back on — quake3 crashed mid-combat), and a draw silently dropped when
 `u_vbuf_translate_begin` fails on the index-unrolling path (`goto out` skips `draw_vbo` and
 `debug_warn_once` is inert in release builds — Quake III's world rendered black while player
-models stayed correct). A third is an upstream V3D limitation rather than a Phoenix bug: the TFU
-multi-level mipmap generator supplies OPAD only for level 0 and *infers* the tiling of levels ≥ 1,
-and that inference matches `v3d_setup_slices`/the TMU only for power-of-two bases — so Quake II's
-NPOT model skins (banner 260×195, soldier 288×195) scrambled at distance while every POT texture
-was correct. Fix: decline the TFU fast path for NPOT bases and fall back to render-based mipmap
-generation. Also fork-local and load-bearing: Early-Z is force-disabled on Phoenix, because a
+models stayed correct). A third was recorded as an upstream V3D limitation: on the first GPU stack
+Quake II's NPOT model skins (banner 260×195, soldier 288×195) scrambled at distance while every POT
+texture was correct, and declining the TFU's multi-level mipmap generation for NPOT bases (falling
+back to render-based generation) fixed it; `mesa_drm` still carries that as patch 0004.
+↩ **Corrected 2026-11-21:** an independent check on upstream Mesa 26.2.7 on the same board (every
+mip level read back through the sampler and through an FBO against a CPU box-filtered reference,
+13 NPOT/POT sizes, RGBA8 and RGB8) found the TFU's NPOT mipmaps correct (error ≤ 7/255 at levels
+2–5) and no scramble in Quake II. So the scramble most likely came from the first stack's own
+texture-layout changes, not from upstream; whether patch 0004 is still needed on the current
+stack is to be measured the same way. Also fork-local and load-bearing: Early-Z is force-disabled on Phoenix, because a
 depth-tested *tilted* quad hung the GPU while a parallel one was clean — the commit records
 "avoids constant depth-drain render wedge (5fps->38fps)", so it is a live divergence from upstream
 Mesa with a measured cost and benefit.
