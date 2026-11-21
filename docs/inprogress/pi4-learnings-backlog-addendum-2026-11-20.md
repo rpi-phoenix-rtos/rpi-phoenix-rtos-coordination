@@ -27,6 +27,7 @@ lists as "not started: the players"; 47 is a cheap browser A/B; 48 feeds task 36
 | 48 | — | H.264 via VCHIQ + MMAL: five operational limits (folded into task 36) | reference |
 | 49 | Low | Bench: an agent's ssh helper must check it reached its own Pi session | S |
 | 50-57 | — | Part 2: suggestions for our open issues D5, C18, P3, P1, C17, C5, L36, F2 (table at the end) | per item |
+| 58 | Medium | Idle timer interrupts ~6 200/s → hundreds: GENET/KMS waits, PL011 RX IRQ, xHCI event interrupt, tickless secondaries | S each, M for tickless |
 
 ## Medium
 
@@ -156,3 +157,37 @@ be checked against our source before acting; "checked" below means read in our t
 | 57 | F2 (no Bluetooth host stack) | NetBSD's `sys/netbt` (HCI, L2CAP, RFCOMM, SCO, `bthidev` for keyboards/mice; BSD-2) as a BSD-licensed host stack on top of our working HCI transport | idea |
 | — | F1 (WiFi throughput) | Calibration: 49 up / 46 down Mbit/s (~6 MB/s) on the same 2.4 GHz access point; interrupt-moved data blocks cut CPU per MiB by a third without changing the rate. The AP and band matter more than further bus work | matches our 2026-11-20 A/B (5.1 MB/s, CPU −50 %) |
 | — | P7 (no UTF-8 in libphoenix) | musl's `mbrtowc`/`wcrtomb`/`wcwidth` (MIT) as the compact reference | idea |
+
+## 58. Idle timer interrupts: ~6 200/s here against ~355/s on the other port (read 2026-11-21)
+
+Measured idle (per-CPU heartbeat, after the xHCI fix of 11-19): CPU 0 ~3 180/s, CPUs 1-3 ~1 001/s each. The other
+port measures ~355/s summed over 4 CPUs at idle (99.5 % idle). Reading our kernel (no rate below is measured):
+
+- **CPUs 1-3: a fixed 1 ms tick** (`SYSTICK_INTERVAL 1000`, `hal/aarch64/arch/cpu.h:62`; re-armed flat on every
+  interrupt, `proc/threads.c:313-325`, because CNTV is level-triggered). It serves round-robin preemption and is the
+  only way an idle secondary picks up new ready work: there is no reschedule IPI (`arch/interrupts.h:28`), and the
+  idle loop's low-power hook is off on aarch64 (`hal_cpuLowPowerAvail()` returns 0, `cpu.c:585-588`). CPU time
+  accounting does not depend on the tick.
+- **CPU 0: no separate tick**, one interrupt per distinct sleeper deadline (capped at 1 ms; `threads.c:158-174`,
+  `:328-343`). Its ~3 200/s are the boot services' polling, by reading:
+
+  | source | wait | est. /s |
+  |---|---|---|
+  | `pl011-tty` RX/TX thread (polled, no IRQ) | `usleep(1000)`, `pl011-tty.c:1131` | ~1 000 |
+  | xHCI interrupt-IN poller (keyboard, mouse) | `usleep(1000)`, `xhci.c:831`, `:874` | ~1 000 |
+  | GENET IRQ thread RX backstop | `condWait` 2 ms, `bcm-genet.c:199`, `:1319` | ~500 |
+  | KMS vblank thread (60 Hz, ~8 waits per frame) | ≤ 2 ms, `kms_vblank.c:304`, `:502` | ~450-540 |
+  | pl011 keyboard bridge | `usleep(8000)`, `pl011-tty.c:74`, `:1183` | ~125 |
+  | v3d-async event thread backstop | 10 ms, `v3da_sched.c:43` | ~100 |
+  | WiFi (link-state / idle polls) | 10-100 ms | 10-100 (not verified) |
+
+**Order of work** (cheap and local first; each verified with the heartbeat build, idle, 20 boots):
+1. GENET backstop 2 ms → 50-100 ms (the IRQ is the primary path) and the KMS vblank waits (sleep to the next vblank,
+   not in 2 ms slices): ~1 000/s, small, low risk.
+2. PL011: RX interrupt instead of the 1 ms poll thread (the UART has one; the console path must stay safe for panics):
+   ~1 000/s.
+3. xHCI: wait on the event-ring interrupt instead of sleeping 1 ms per idle interrupt-IN pipe: ~1 000/s, larger.
+4. Tickless idle on CPUs 1-3: implement `hal_cpuLowPower()` (mask the timer, mark the CPU idle, `wfi`), add a
+   reschedule SGI sent by `_readyAdd()` to an idle CPU, keep a 100 ms-1 s backstop so a lost IPI costs at most that
+   and the heartbeat still reports; ~150 lines, low-medium risk (global ready queue; CPU 0 keeps its interrupts):
+   ~3 000/s.
