@@ -182,9 +182,9 @@ port measures ~355/s summed over 4 CPUs at idle (99.5 % idle). Reading our kerne
   | WiFi (link-state / idle polls) | 10-100 ms | 10-100 (not verified) |
 
 **Order of work** (cheap and local first; each verified with the heartbeat build, idle, 20 boots):
-1. GENET backstop 2 ms → 50-100 ms (the IRQ is the primary path) and the KMS vblank waits (sleep to the next vblank,
+1. ✅ branches 2026-11-21 (lwip `genet-idle-poll` `3606550`, devices `kms-vblank-wait` `e5b8d3c3`): GENET backstop 2 ms → 50 ms when idle (the IRQ is the primary path) and the KMS vblank waits (sleep to the next vblank,
    not in 2 ms slices): ~1 000/s, small, low risk.
-2. PL011: RX interrupt instead of the 1 ms poll thread (the UART has one; the console path must stay safe for panics):
+2. ✅ branch 2026-11-21 (devices `pl011-rx-irq` `92afcd22`, project `c0a5025`): PL011 RX interrupt instead of the 1 ms poll thread (the UART has one; the console path must stay safe for panics):
    ~1 000/s.
 3. xHCI: wait on the event-ring interrupt instead of sleeping 1 ms per idle interrupt-IN pipe: ~1 000/s, larger.
 4. Tickless idle on CPUs 1-3: implement `hal_cpuLowPower()` (mask the timer, mark the CPU idle, `wfi`), add a
