@@ -65,13 +65,13 @@ Effort is the work to prepare the PR, not to write the fix:
 
 ## 3. Summary
 
-- **139 candidates examined** (131 on 2026-11-19, F14–F18 and L48 on 2026-11-20, K44–K45 on 2026-11-21). 14 are already fixed or superseded upstream (one of them, `_SC_OPEN_MAX`, is a known upstream issue), and 7 are fork-only code. That leaves **118 live candidates**:
+- **140 candidates examined** (131 on 2026-11-19, F14–F18 and L48 on 2026-11-20, K44–K46 on 2026-11-21). 14 are already fixed or superseded upstream (one of them, `_SC_OPEN_MAX`, is a known upstream issue), and 7 are fork-only code. That leaves **119 live candidates**:
 
   | kind | count |
   |---|---|
   | a: generic bug fix | 84 (one of them, K34, also has an aarch64 half) |
   | b: aarch64-generic fix | 6 |
-  | c: enhancement | 21 |
+  | c: enhancement | 22 |
   | d: report only | 7 |
 
 - **39 apply cleanly** to upstream `master` and compile on aarch64. A few more need only a trivial conflict resolved: K35 `hal_jmp`, whose hand-resolved copy compiles, and D01 libtty. Most of the ext2 series (29 of 36 commits) also applies, once the one commit upstream already has and the commits that depend on F01 are left out (section 6).
@@ -220,6 +220,7 @@ Ten PRs, each verified on 2026-11-19 to cherry-pick cleanly onto upstream `maste
 | K43 | vfork/fork child read the parent's context before it was saved | a | `33af3e81` | open (not re-read) | conflicts | premain hang | 3 | S |
 | K44 | aarch64: only translation/access-flag/permission aborts go to the page-fault handler (an alignment fault or external abort on a present page looped for ever) | b | `9ef9624e` | open (upstream `exceptions_dispatch` identical) | conflicts on context (fork handlers nearby); small re-derive | test `kh_vm.device_alignment_fault_kills` (tests `88bc1f1`) | 1 | S |
 | K45 | `MAP_CONTIGUOUS` pages not zeroed — **to be reported privately** (issue 7) | a | `057e0d03` | open | conflicts on context; small re-derive | test `kh_vm.contiguous_memory_is_zeroed` | private first | S |
+| K46 | Tickless idle for secondary CPUs: a reschedule SGI, a 100 ms backstop instead of the 1 ms tick on an idle CPU, no kick when an idle waker runs the thread itself | c | `c0c4abdc`, `e49c51c6`, `77b64ed1` (+ heartbeat `ae93f094`, `642f2752`) | open (upstream has no per-CPU wakeup IPI; builds on the fork's aarch64 SMP timer arrangement) | conflicts (fork scheduler/SMP changes) | Pi 2026-11-21: idle CPUs 1-3 ~1 001 → 0-8 timer interrupts/s + 9-260 IPIs; q3 A/B n=3/arm no regression (52.04 vs 51.60 fps) | discussion | M |
 
 ### libphoenix
 
