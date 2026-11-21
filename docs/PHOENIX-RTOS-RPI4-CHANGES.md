@@ -1008,8 +1008,10 @@ back to render-based generation) fixed it; `mesa_drm` still carries that as patc
 mip level read back through the sampler and through an FBO against a CPU box-filtered reference,
 13 NPOT/POT sizes, RGBA8 and RGB8) found the TFU's NPOT mipmaps correct (error ≤ 7/255 at levels
 2–5) and no scramble in Quake II. So the scramble most likely came from the first stack's own
-texture-layout changes, not from upstream; whether patch 0004 is still needed on the current
-stack is to be measured the same way. Also fork-local and load-bearing: Early-Z is force-disabled on Phoenix, because a
+texture-layout changes, not from upstream. Measured the same way on the current stack
+(`tools/gpu-lane/mipcheck`, 2026-11-21): the TFU path was within 16 code values on all 252 graded levels, the
+render-based fallback off by more on 118 (up to 92 on small odd sizes), so **patch 0004 was dropped** (ports
+`0422509`; Quake II same-scene snapshots identical). Also fork-local and load-bearing: Early-Z is force-disabled on Phoenix, because a
 depth-tested *tilted* quad hung the GPU while a parallel one was clean — the commit records
 "avoids constant depth-drain render wedge (5fps->38fps)", so it is a live divergence from upstream
 Mesa with a measured cost and benefit.
@@ -1328,7 +1330,7 @@ Added 2026-11-18/19. The first four are in shared code and are shortlist rows; t
 
 | what | before → after | how |
 |---|---|---|
-| GENET / NFS throughput | NFS read **29.9 MB/s** (2026-08) → **~88-99 MB/s** (2026-11-21, 256 MiB: coreutils `dd` 90.0 / 99.0 / 99.0 MB/s, host nfsd byte counter 88.2 / 87.9 MB/s), write **19.7 MB/s** on a Pi 4B | 256 unique RX buffers (aliasing was corrupting RX), multi-slot TX, TX pipelining, RX input batching, cacheable TX mapping via `dmammap_cached`, `recvmbox` coalescing |
+| GENET / NFS throughput | NFS read **29.9 MB/s** (2026-08) → **~88-99 MB/s** (2026-11-21, 256 MiB: coreutils `dd` 90.0 / 99.0 / 99.0 MB/s, host nfsd byte counter 88.2 / 87.9 MB/s), write **19.7 MB/s** on a Pi 4B | 256 unique RX buffers (aliasing was corrupting RX), multi-slot TX, TX pipelining, RX input batching, cacheable TX mapping via `dmammap_cached`, `recvmbox` coalescing Tried and not adopted (2026-11-21): RX cache maintenance over the received frame instead of the whole 2 KiB slot (`GENET_RX_SYNC_FRAME=1`, lwip build option, default 0) — same throughput (dd 90-99, nfsd 88 MB/s), lwip CPU slightly higher (1 533 vs 1 450 samples per 15 s). |
 | SD card read | single-block → **~16×**; then DDR50 20.1 → **33.4 MB/s**; then 128 KiB transfers → **38.3 MB/s** | CMD18/CMD25 multi-block with Auto-CMD23, SDMA read path, UHS-I DDR50 (ACMD41 S18R → CMD11 voltage switch → CMD6 → HC2), `SDCARD_MAX_TRANSFER` and the libcache sector raised to 128 KiB |
 | SD card write | ~11× multi-block; now on **ADMA2**, all three engines within 6 % of each other | ⚠ **Corrected 2026-09-20.** This row used to say DMA writes were "gated off deliberately" because "SDMA writes silently corrupted the first block 1–2 runs in 10 on this Arasan/BCM2711 controller". Both halves were wrong: the corruption was **whole-transfer and every time**, and the cause was **ours** (see the bus-address row above), not a controller quirk. Writes now run on ADMA2 scatter-gather — the engine Linux uses on this SoC — falling back to SDMA if a descriptor list cannot be built. Measured end-to-end (`/usr/bin/dd`, 64 MiB): PIO 12.2 · SDMA 12.3 · **ADMA2 12.7–12.9 MB/s**; the card bounds all three, so the win is structural (no 512 KiB request cap, no contiguous buffer), not a rate. ⓘ The older "17.4 MB/s" was a raw in-driver figure and is not comparable with these end-to-end ones. |
 | NFS RPC latency | **20×** overall slowdown removed | `libnfs poll_timeout` was 100 ms, and the socket `poll()` never woke on readiness — every RPC ate a 100 ms stall. Set to 1 ms. |
