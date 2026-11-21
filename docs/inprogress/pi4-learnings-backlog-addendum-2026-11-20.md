@@ -187,7 +187,7 @@ port measures ~355/s summed over 4 CPUs at idle (99.5 % idle). Reading our kerne
 2. ✅ branch 2026-11-21 (devices `pl011-rx-irq` `92afcd22`, project `c0a5025`): PL011 RX interrupt instead of the 1 ms poll thread (the UART has one; the console path must stay safe for panics):
    ~1 000/s.
 3. xHCI: wait on the event-ring interrupt instead of sleeping 1 ms per idle interrupt-IN pipe: ~1 000/s, larger.
-4. Tickless idle on CPUs 1-3: implement `hal_cpuLowPower()` (mask the timer, mark the CPU idle, `wfi`), add a
+4. ✅ branch 2026-11-21 (kernel `kernel-tickless-idle` `ae93f094`, reschedule SGI + 100 ms backstop, Pi pending). Tickless idle on CPUs 1-3: implement `hal_cpuLowPower()` (mask the timer, mark the CPU idle, `wfi`), add a
    reschedule SGI sent by `_readyAdd()` to an idle CPU, keep a 100 ms-1 s backstop so a lost IPI costs at most that
    and the heartbeat still reports; ~150 lines, low-medium risk (global ready queue; CPU 0 keeps its interrupts):
    ~3 000/s.
