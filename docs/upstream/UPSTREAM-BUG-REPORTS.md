@@ -139,7 +139,7 @@ why); *n/a* = we have no patch for upstream's code.
 
 | ID | Project | Component | Title | Severity | Scope | Our fix | Upstream | Patch | Form |
 |---|---|---|---|---|---|---|---|---|---|
-| [K01](#k01) | Phoenix kernel | hal/aarch64/pmap | Dirty lines of a page's previous owner survive into a non-cacheable mapping | data corruption | aarch64 | kernel `5d8645f6` | open | rework | full |
+| [K01](#k01) | Phoenix kernel | hal/aarch64/pmap | Dirty lines of a page's previous owner survive into a non-cacheable mapping | data corruption | aarch64 | kernel `5d8645f6` + `90544244` | open | squash | full |
 | [K10](#k10) | Phoenix kernel | posix/uchannel | SCM_RIGHTS descriptors not bound to their message (SEQPACKET/DGRAM) | wrong output | general | kernel `39609195` | open | conflicts | full |
 | [K14](#k14) | Phoenix kernel | vm/map | `meminfo()` credits every piece of a split mapping with its whole amap | wrong output | MMU | kernel `e802ac0e` | open | conflicts | full |
 | [K16](#k16) | Phoenix kernel | proc/msg | A dying process waits forever on a server that received its request | hang | general | kernel `3c5f210b`, `07bd1384`, `a8880d9d` | open | conflicts | full |
@@ -230,9 +230,9 @@ otherwise.
 - **Issue fields:** Category: BUG · labels `bug`, `kernel` · title "hal/aarch64: dirty cache lines survive when a freed page is mapped non-cacheable"
 - **Severity:** data corruption (DMA buffers silently overwritten at cache-line granularity)
 - **Scope:** aarch64 (`hal/aarch64` only; `hal/armv7a/pmap.c:356` already maintains the cache when mapping NC/Device)
-- **Our fix:** kernel `5d8645f6` "clean+invalidate a page when it becomes non-cacheable"
-- **Patch:** cherry-picks cleanly onto `4c7564cd` and compiles for aarch64, but **needs rework before sending** (see
-  Fix)
+- **Our fix:** kernel `5d8645f6` "clean+invalidate a page when it becomes non-cacheable" + `90544244` "flush a page
+  made non-cacheable by its physical address" (2026-11-21; send squashed)
+- **Patch:** the pair compiles for aarch64; `90544244` is the rework the first version needed (see Fix)
 - **Upstream status:** open; checked against phoenix-rtos-kernel `4c7564cd` on 2026-11-21. `hal/aarch64/pmap.c:227`
   `_pmap_cacheOpBeforeChange()` returns at once when the old entry is invalid (`if ((oldEntry & DESCR_VALID) == 0U)
   return;`), and `_pmap_cacheOpAfterChange()` (`:255-269`) only invalidates the I-cache. A page freed by
@@ -262,9 +262,10 @@ cleans the page.
 
 **Fix.** Our commit cleans and invalidates the page when the new entry's memory type is `MAIR_IDX_NONCACHED`
 (`hal_cpuFlushDataCache(vaddr, vaddr + SIZE_PAGE)` in `_pmap_cacheOpAfterChange()`); Device mappings are left alone.
-It flushes by virtual address in the current address space, which is wrong when the mapping is made in another one
-(`vm_mapCopy()` for a child). A PR should clean the page through its physical address (the scratch mapping that
-`_pmap_cacheOpBeforeChange()` already uses).
+The first version flushed by virtual address in the current address space, which is wrong when the mapping is made in
+another one (`vm_mapCopy()` for a fork child, while the parent's tables are live). `90544244` cleans the page through
+its physical address instead, via the scratch mapping `_pmap_cacheOpBeforeChange()` already uses (helper
+`_pmap_flushPage()`); Pi gate 2026-11-21 incl. a new fork test, `kh_vm.uncached_private_survives_fork`.
 
 **Evidence.** On the Pi, GPU control lists written through non-cacheable buffers were corrupted at 64-byte
 granularity (zeros or the previous owner's data), about 12 corrupt lists per 8 boots. A clean+invalidate of each new
