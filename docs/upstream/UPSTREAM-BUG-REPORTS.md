@@ -195,6 +195,7 @@ why); *n/a* = we have no patch for upstream's code.
 | [W04](#w04) | Phoenix lwip | port/threads | 512-byte thread-collector stack overflows inside `free()` | crash | general | lwip `356ae98` | open | clean | short |
 | [T01](#t01) | Phoenix build | toolchain (libstdc++) | libstdc++ built without clock/sleep backends: `steady_clock` resolution 1 s | wrong output | general | build `95d9fca` (GCC 16 only) | open | no | full |
 | [R01](#r01) | Phoenix ports | jq | jq 1.8.2 recipe installs libjq and oniguruma into the build host's `/usr/local` | build | host | none (we use our own recipe) | open | n/a | full |
+| [TS01](#ts01) | Phoenix tests | libc/stdio | `stdio_fflush` leaves its test file behind; the next run's `stdio_fopenfclose_file` fails | test | general (persistent root) | tests `793e190` | open | clean | short |
 | [M01](#m01) | Mesa | gallium/auxiliary (u_vbuf) | NULL translate object dereferenced; NULL cached in the translate cache | crash | general | ports `mesa_drm/patches/0005` (incomplete) | open | applies | short |
 | [M02](#m02) | Mesa | egl/drm, gbm | GBM back buffer without a DRI image dereferenced in `eglMakeCurrent` | crash | general | ports `mesa_drm/patches/0009` | open | applies | short |
 | [M03](#m03) | Mesa | broadcom/compiler | Register-allocation passes do work proportional to blocks times temporaries | performance | general | ports `mesa_drm/patches/0020`–`0022` | open (partly changed) | partly | short |
@@ -1809,6 +1810,22 @@ adopt it).
 
 **Fix (suggested).** Pass `--prefix`/`--libdir` inside the build tree, or install just the binary (`install -m 755 jq
 "$PREFIX_PROG"`). `--with-oniguruma=builtin` alone still installs `libonig`.
+
+### 1.8 Tests (phoenix-rtos-tests)
+
+##### TS01 — libc/stdio: `stdio_fflush` leaves `stdio_file_test` behind, so the next run fails
+
+- **What:** `stdio_fflush.stdio_fflush_input_syncs_offset` (`4c5b3f9`) creates `stdio_file_test` in the current
+  directory and nothing removes it: the group's `TEST_TEAR_DOWN` is empty, unlike every other group in the file. On a
+  root filesystem that survives a reboot, the next `test-libc-stdio` run finds the file, so
+  `stdio_fopenfclose_file`'s `fopen(..., "r")` succeeds and the `errno` check reads the EBADF the preceding
+  `file.fclose_stdin_ebadf` test left: "Expected 2 Was 9" (`stdio_file.c:92`).
+- **Severity / scope:** a false test failure on every second run; any target whose root keeps files between runs.
+- **Our fix:** tests `793e190` (the group's teardown removes the file). Pi: two full runs in a row, 113/0 each, no
+  file left (2026-11-21).
+- **Upstream status:** open; checked against phoenix-rtos-tests `7d48d34` on 2026-11-21: `libc/stdio/stdio_file.c:1701`
+  empty teardown, the test at `:1802`. Tracker: not searched (found the same day).
+- **Short form because:** a test-hygiene defect with a one-line fix.
 
 ## 2. Mesa
 

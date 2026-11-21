@@ -370,6 +370,12 @@ Ten PRs, each verified on 2026-11-19 to cherry-pick cleanly onto upstream `maste
 |---|---|---|---|---|---|---|---|---|
 | R01 | jq 1.8.2 recipe installs into the build host's `/usr/local/lib` | d | — | open | n/a | adoption build stopped | report | — |
 
+### phoenix-rtos-tests
+
+| id | defect / change | kind | our SHA(s) | upstream status | applies to upstream `master` | test / evidence | order | effort |
+|---|---|---|---|---|---|---|---|---|
+| TS01 | `stdio_fflush` group leaves `stdio_file_test` behind; the next run's `stdio_fopenfclose_file` fails ("Expected 2 Was 9") | a | `793e190` | open (`7d48d34`, 2026-11-21) | clean (one teardown line) | Pi: two full `test-libc-stdio` runs in a row 113/0 each | any batch | XS |
+
 ### phoenix-rtos-tests (tests that go with the fixes)
 
 These were cherry-picked onto upstream `phoenix-rtos-tests` `master`. "Registration conflict" means only the `libc/Makefile`, `libc/test.yaml` or `main.c` list of test groups conflicts, because the fork has more groups. That is trivial to resolve.
