@@ -281,6 +281,7 @@ Ten PRs, each verified on 2026-11-19 to cherry-pick cleanly onto upstream `maste
 | L46 | libm replaced with FreeBSD msun for the transcendental functions | c | `6bb0bdc`, `6bf27ab` | open | conflicts (many fork libm files) | ≤ 2.75 ULP vs MPFR | discussion | L |
 | L47 | Far-future deadline of an unnamed semaphore | a | `203a347` | fork-only file (`pthread/sem_unnamed.c`) | n/a | — | not applicable | — |
 | L48 | Mount table: `MOUNTED` = `/dev/mtab` log on devfs, `mount_record()` for self-mounting servers, `getmntent_r()` fixes (reentrant, malformed lines skipped, octal escapes) — with filesystems `d23e75e`, devices `5658de78`, utils `4bed126` (psh `df`/`mount`), tests `f7ee0b4` | c | `ad42f63` | upstream has no mount table and an empty `<mntent.h>`; `mntent.c` is fork-added | new files; not yet tried | Pi 2026-11-20: `df`, `mount`, `cat /dev/mtab` correct on the NFS root; `test-libc-misc` 247/0 | discussion (design proposal first) | M |
+| L50 | UTF-8 `LC_CTYPE` selected by `setlocale()`; `MB_CUR_MAX` per locale; Unicode `wcwidth()` | c | `84f11b9` (tests `8bbb987`) | upstream has no UTF-8 locale (`origin/master` `fc60045`, 2026-11-21: no UTF-8 in `locale/`, `wchar/`) and no mntent (L48 also new there) | needs the fork's wide-char/wctype layer (CHANGES "wide char / wctype") first | host harness `tools/libwchar-hosttest` (C.UTF-8 45.5 M comparisons vs glibc, 0 diffs); `test-libc-misc` `locale_utf8` | after the wctype batch | L |
 
 ### phoenix-rtos-filesystems
 
