@@ -9,8 +9,8 @@
 > RESOLVED 2026-05-17; SCTLR.{M,C,I} set, all Normal RAM WB-cacheable) — the recurring
 > "caches off = perf lever" claim is wrong; and the GENET cacheable-RX experiment (a separate
 > lever) was CONCLUDED UNVIABLE (corrupts the GPU framebuffer under load, #11 re-opened,
-> default-off). Genuinely-open workarounds are tracked in the checklist (e.g. TD-20 DC-ZVA
-> gate; TD-10's masked SError was resolved 2026-09-26).
+> default-off). Genuinely-open workarounds are tracked in the checklist (TD-20's DC-ZVA gate was
+> resolved 2026-11-21, TD-10's masked SError 2026-09-26).
 
 This document is the registry of transitional shortcuts and workarounds
 accepted during the Raspberry Pi 4 bring-up. Each item has a stable ID
@@ -325,48 +325,6 @@ authoritative current state.
     ISB / invalid-to-valid VA invalidation.
   - Do not use this as evidence that zone or kernel-heap cacheability is solved;
     those remain separate boundaries.
-
-## TD-20: A72 DC ZVA disabled in hal_memset (EL2-trap theory refuted; hang unexplained)
-
-- **Status:** KNOWN LIMITATION (HW-gated). A sound, A72-scoped gate (zynqmp
-  keeps ZVA); a functional perf-only change, correctness-safe. ↩ *Corrected
-  2026-09-30:* removal used to be "pending HW proof of the EL2 DC-ZVA trap
-  state"; that proof was done on 2026-09-25 and there is no trap (see
-  Resolution requirements). What removal needs now is an explanation of the
-  recorded `_log_init` hang plus the caller argument below; the hang does not
-  reproduce in QEMU, so it is not unattended. The `TODO(TD-20)` comment in
-  `_memset.S` was reworded to say this (kernel `b13e7b66`, branch
-  `td-hygiene`, comment-only).
-- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_memset.S`
-  (the `__TARGET_AARCH64A72` block that force-defines `MEMSET_WITHOUT_ZVA`).
-- **What:** On Cortex-A72 (Pi 4) the `dc zva` fast path in `hal_memset` is
-  disabled; normal stores are used instead. The Pi 4 reaches EL1 via
-  firmware/armstub/PLO (not TF-A), and the first post-D-cache large zeroing
-  operation (`_log_init`'s `log_common` memset) hangs on real hardware with no
-  exception output. The hang does not reproduce in QEMU.
-- **Resolution requirements:** ~~Prove the EL2 trap state for DC ZVA on Pi 4~~
-  — **DONE 2026-09-25, and the hypothesis was WRONG.** `tools/dczid-probe/`
-  reads `DCZID_EL0` (an EL0-readable register) on the real Pi 4:
-
-      DCZID raw=0x4  DZP=0 (PERMITTED)  BS=4 (block = 64 bytes)
-      EXEC=ok (64 bytes zeroed, neighbouring byte intact)
-
-  **`HCR_EL2.TDZ` is NOT set**: `dc zva` is permitted from EL0/EL1 and executes
-  correctly with the MMU and caches up. So the EL2 trap this entry was blocked
-  on does not exist, and no amount of further EL2 investigation will unblock it.
-
-  ⚠ **The gate still stands, for a different and better-supported reason.** The
-  header of `hal_memset` itself says the routine *"may not work for uncached
-  memory"*, and the recorded failure is a **hang with no exception output** in
-  `_log_init`'s first large zeroing immediately after the D-cache is enabled —
-  which fits `dc zva` against a region that is not Normal cacheable memory at
-  that moment, not a trap (a trap would have produced an exception).
-
-  So lifting the gate is no longer gated on EL2 proof; it is gated on showing
-  that **no caller of `hal_memset` can pass uncached memory**, which is a
-  whole-kernel argument rather than a measurement. Enabling it without that is
-  a correctness gamble for a performance-only gain. ⛔ Do NOT re-run the EL2
-  probe — the answer is above.
 
 ## TD-21: syscall table diverges from upstream (mutex syscalls kept append-only)
 
@@ -2330,7 +2288,6 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-23 | OPEN (deliberate) | `RPI4AUDIO_ARMTRIALS` is a diagnostic ioctl + struct in a **published** header, i.e. a permanent ABI, for a facility that can block the driver's only message thread ~100 s. Kept because it is the only in-process sampler of the failing channel and the defect is open; delete it with `q2-sdl-openaudio-hang`, or gate it behind a build flag. ⚠ Blind to a stale control-block fetch — a re-arm re-reads the same CB. |
 | TD-22 | ✅ RESOLVED 2026-09-19 (HW-gated) | `vm/map.c:204` — `_map_find()`'s right-hand leaf return can hand back a non-`MAP_FIXED` **hint** sitting nearer the end of a gap than `size`, overlapping the next entry. Unreachable today (libphoenix's only hinted mmaps are `MAP_FIXED`; `malloc` passes NULL). The commented-out guard cannot simply be restored — it would also gate the descent, where `rmaxgap` is a subtree maximum. Leaf-only fix written out in the section; needs its own boot + six-app gate. |
 | TD-21 | ✅ RESOLVED 2026-09-04 (HW-verified) | row added 2026-09-17 — the register's newest and most detailed item had **no checklist row at all**, while the header calls the checklist authoritative. Syscall-table divergence closed; upstream order confirmed in `include/syscalls.h:39-41` (`mutexUnlock, mutexConsistent, mutexPrioCeiling`). ⛔ Do not re-raise as pending. |
-| TD-20 | KNOWN LIMITATION (HW-gated) | A72 `dc zva` disabled in `hal_memset`; perf-only, correctness-safe, A72-scoped. The EL2-trap theory is refuted (`DCZID_EL0` DZP=0, 2026-09-25). Open: what caused the recorded no-exception hang in `_log_init`'s first memset (target: cacheable `.bss`), and whether any `hal_memset` caller can pass uncached memory (KNOWN-ISSUES P3) |
 | TD-Eth-DHCP | ✅ RESOLVED 2026-05-28 (lwip `7f0b495`) | autonomous DHCP verified end-to-end via test-cycle-netboot.sh --probe q + scripts/get-pi-ip.sh; probe captured `netif: en1 ip=10.42.0.12 gw=10.42.0.1 flags=0x1f UP LINK DHCP` (artifact 2026-05-28-...-dhcp-clean-probe.txt) |
 | TD-Eth-MAC | RESOLVED 2026-05-25 (lwip `79bd607`) | mailbox `GET_BOARD_MAC` plumbed in `genet_mboxGetMac()` |
 | TD-Eth-Promisc | RESOLVED 2026-05-25 (lwip `79bd607`) | PROMISC only on `mac_is_fallback` path |

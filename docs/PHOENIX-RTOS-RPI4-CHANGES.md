@@ -81,7 +81,7 @@ Every row was checked again on 2026-11-19 against upstream `master` (v3.4.0 plus
 row that upstream has fixed or replaced since is marked **↺ upstream** in the defect column, with
 the upstream commit; a row that turned out not to be a defect in upstream code is marked
 **fork-only**.
-Rows 47–58 were added on 2026-11-19 and rows 59–63 on 2026-11-20, and **(branch)** marks a fix that is not yet on the fork's
+Rows 47–58 were added on 2026-11-19, rows 59–63 on 2026-11-20 and rows 64–65 on 2026-11-21, and **(branch)** marks a fix that is not yet on the fork's
 `master`. The status of each row is summarised in a list after the table.
 
 | # | defect | where | why it matters to you |
@@ -149,6 +149,8 @@ Rows 47–58 were added on 2026-11-19 and rows 59–63 on 2026-11-20, and **(bra
 | 61 | **ext2: a `write()` that ran out of space part way returned `-ENOSPC` and left the file inconsistent** | filesystems `ext2/file.c`, `ext2/block.c` `9e1ea4e` | The blocks it had written lay past `i_size`, which was not updated; `i_blocks` grew in memory only; and its scan ahead had allocated indirect blocks for the whole request, which stayed allocated and either pointed to or leaked. Filling a 32 MiB filesystem with 1 MiB writes left a wrong `i_size`, a wrong `i_blocks` and 39 blocks in use that nothing used. A partial write now returns the bytes written (POSIX), with size and `i_blocks` to match; only a call that wrote nothing fails, and it leaves the inode, free count and bitmap as they were. Host harness, 5 write sizes × both block sizes × unmount and power cut: `e2fsck` clean. |
 | 62 | **ext2: the inode was written before its new indirect blocks** | filesystems `ext2/obj.c` `13f4808` | `_ext2_obj_sync()` wrote the inode first. A newly allocated indirect block holds its previous owner's data until written, so a power cut in between left the inode pointing at garbage "block numbers"; `e2fsck -y` then clears them. Replaying every prefix of one `write()`'s device writes shows it at 2 of 7 cut points of a one-block write into a double-indirect range. Indirect blocks are now written lower levels first and the inode last; a cut leaves only what `e2fsck` repairs without loss. |
 | 63 | **ext2: a symlink create that failed to write its target left a dangling directory entry** | filesystems `ext2/ext2.c` `6c8c117` | `libext2_create()` makes the inode and its entry, then writes the target. When that write failed, the undo destroyed the inode but kept the entry ("entry has deleted/unused inode"). With row 61 a short target would also have been accepted. Anything but the whole target now fails, and the undo unlinks the name. |
+| 64 | **aarch64: an alignment fault or external abort on a present page looped for ever** | kernel `hal/aarch64/exceptions.c` `9ef9624e` | Every instruction and data abort went to the page-fault handler whatever its fault status code. An alignment fault (an unaligned access, or `DC ZVA`, to Device memory), a synchronous external abort or a TLB conflict is not about a missing page: `map_pageFault()` finds the page present and writable, resolves nothing and returns to the faulting instruction, so the thread spins in the kernel with no message. Only translation, access-flag and permission faults ({I,D}FSC 0b0001LL-0b0011LL) now reach the page-fault handler; the rest go to the default handler, which reports them and kills the process. Pi 2026-11-21: `kh_vm.device_alignment_fault_kills` (an unaligned load from a Device mapping of the test's own page) is reported as `esr=0x92000021` and the child is killed, 8/8 boots. |
+| 65 | **`MAP_CONTIGUOUS` memory was handed out without being zeroed** | kernel `vm/object.c` `057e0d03` | Security-relevant; to be reported to the maintainers privately (plan, issue 7). The fix zeroes the pages through a cacheable kernel mapping before they are mapped. Pi 2026-11-21: `kh_vm.contiguous_memory_is_zeroed` 8/8 boots. |
 
 **Upstream status of each row** (checked in upstream `master` on 2026-11-19):
 
@@ -157,7 +159,7 @@ Rows 47–58 were added on 2026-11-19 and rows 59–63 on 2026-11-20, and **(bra
   this fork. Rows 18, 31 and 37–46 are in drivers, ports or files that upstream does not carry, and
   row 40 is in the coordination repository. They describe the fork, not an offer.
 - **Still present upstream, confirmed in the code:** 1, 2, 5, 7, 10, 11, 13, 16, 17, 19 (all but c),
-  20, 21, 22, 23, 24, 25 (in the default libm), 27, 34, 35, 36, and the new rows 47–51, 53, 55–63 (rows 59–63 checked against upstream `master` `52ae003`, 2026-11-20).
+  20, 21, 22, 23, 24, 25 (in the default libm), 27, 34, 35, 36, and the new rows 47–51, 53, 55–65 (rows 64–65 checked against upstream kernel `master` on 2026-11-21; rows 59–63 checked against upstream `master` `52ae003`, 2026-11-20).
 - **Confirmed in part:** 4 (the `vasprintf` buffer; the `free()` hardening not re-checked), 8 (see
   the row), 9 (the missing reset-recovery delay; the re-enumeration bound not re-checked), 54 (the
   bitmap-after-pointer order in `ext2_block_create()`; the superblock write pattern not re-checked).

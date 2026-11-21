@@ -1,6 +1,6 @@
 # Upstream contribution plan
 
-- **Status:** draft for the owner, 2026-11-19; updated 2026-11-20 (F14–F18 and L48 added, checked against upstream filesystems `52ae003`; U07 Pi evidence). Nothing has been sent or pushed: per the owner, nothing goes to the official repos until the owner has contacted the project and approves.
+- **Status:** draft for the owner, 2026-11-19; updated 2026-11-20 (F14–F18 and L48 added, checked against upstream filesystems `52ae003`; U07 Pi evidence; 2026-11-21: K44, K45 and issue 7). Nothing has been sent or pushed: per the owner, nothing goes to the official repos until the owner has contacted the project and approves.
 - **Scope:** the fork's general-purpose changes, meaning code that is not Pi 4-specific: arch-independent, or aarch64-generic (also useful on zynqmp, for example). Full Pi 4 support stays in the fork and is out of scope here.
 - **Source material:** [PHOENIX-RTOS-RPI4-CHANGES.md](../PHOENIX-RTOS-RPI4-CHANGES.md) (its "★ Start here" table and the per-area "General bug fixes" sections), and the fixes made from 2026-10-09 to 11-19 that the changes doc does not list yet.
 
@@ -65,12 +65,12 @@ Effort is the work to prepare the PR, not to write the fix:
 
 ## 3. Summary
 
-- **137 candidates examined** (131 on 2026-11-19, plus F14–F18 and L48 on 2026-11-20). 14 are already fixed or superseded upstream (one of them, `_SC_OPEN_MAX`, is a known upstream issue), and 7 are fork-only code. That leaves **116 live candidates**:
+- **139 candidates examined** (131 on 2026-11-19, F14–F18 and L48 on 2026-11-20, K44–K45 on 2026-11-21). 14 are already fixed or superseded upstream (one of them, `_SC_OPEN_MAX`, is a known upstream issue), and 7 are fork-only code. That leaves **118 live candidates**:
 
   | kind | count |
   |---|---|
-  | a: generic bug fix | 83 (one of them, K34, also has an aarch64 half) |
-  | b: aarch64-generic fix | 5 |
+  | a: generic bug fix | 84 (one of them, K34, also has an aarch64 half) |
+  | b: aarch64-generic fix | 6 |
   | c: enhancement | 21 |
   | d: report only | 7 |
 
@@ -218,6 +218,8 @@ Ten PRs, each verified on 2026-11-19 to cherry-pick cleanly onto upstream `maste
 | K41 | Only the primary CPU builds the boot translation tables | b | `eabe9942` | open | conflicts; needs a zynqmp boot-order review | SMP boot race | 3 | M |
 | K42 | Signal frame push bounded at both ends of the user stack | a | `a6ddd2ca` | open | conflicts | double-fault on overflow | 3 | S |
 | K43 | vfork/fork child read the parent's context before it was saved | a | `33af3e81` | open (not re-read) | conflicts | premain hang | 3 | S |
+| K44 | aarch64: only translation/access-flag/permission aborts go to the page-fault handler (an alignment fault or external abort on a present page looped for ever) | b | `9ef9624e` | open (upstream `exceptions_dispatch` identical) | conflicts on context (fork handlers nearby); small re-derive | test `kh_vm.device_alignment_fault_kills` (tests `88bc1f1`) | 1 | S |
+| K45 | `MAP_CONTIGUOUS` pages not zeroed — **to be reported privately** (issue 7) | a | `057e0d03` | open | conflicts on context; small re-derive | test `kh_vm.contiguous_memory_is_zeroed` | private first | S |
 
 ### libphoenix
 
@@ -492,6 +494,12 @@ File these in **`phoenix-rtos/phoenix-rtos-project`**. Upstream commits referenc
 A security-relevant defect in the signal-return path. Details are kept out of this public document and will be
 shared with the maintainers privately, through the contact the owner establishes. The fork's fix is kernel
 `7158b7ad` + `9276ba68` + `2f5e1e62`; the test is `libc/signal/faultsig.c` (`sigreturn_*` cases).
+
+### Issue 7: memory handed out without being cleared — to be reported privately
+
+A security-relevant defect in the kernel's memory handling, found 2026-11-20. Details are kept out of this public
+document and will be shared with the maintainers privately, like issue 4. The fork's fix is kernel `057e0d03`; the
+test is `libc/kernelhard` `kh_vm.contiguous_memory_is_zeroed` (tests `88bc1f1`).
 
 ### Issue 5: a read that crosses the end of a storage device returns `-EINVAL` (zynq drivers)
 
