@@ -806,6 +806,10 @@ bogus ext2 list-corruption crash.
   aborts) were the tests' own stack overflows, not kernel bugs. Bumped to 16 KiB.
 * ★ `991d70c` — `test_condwait` never locked the mutex before `condWait`, which must atomically release
   it, so the kernel correctly returned `-EPERM` and the test reported FAILED against correct code.
+* ★ `793e190` *(2026-11-21)* — `stdio_fflush.stdio_fflush_input_syncs_offset` (upstream, arrived with v3.4.0)
+  left `stdio_file_test` behind (empty group teardown), so on a persistent root every second run failed
+  `stdio_fopenfclose_file` with "Expected 2 Was 9": `fopen(..., "r")` of the "missing" file succeeded and `errno`
+  still held the previous test's EBADF. The teardown now removes it; Pi: two runs in a row 113/0 each. (TS01)
 
 **Un-gated cases, closing known upstream issues.** Six commits remove `TEST_IGNORE` guards now that the
 functions exist: scanf `%m` (`28bec6a`), `memccpy`/`stpncpy`/`strtok_r`/`psignal` (`8d2e0d5`), `strftime`
