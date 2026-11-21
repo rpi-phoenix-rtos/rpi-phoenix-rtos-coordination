@@ -50,11 +50,9 @@ So task 43's first question is answered: **no decoder layout change is needed**,
   **32 MiB by default** for the plane backend (`kms_main.c:2169`, `-p`). A 1080p NV12_COL128 picture is
   15 columns × 128 B × 1 632 lines (H16 1 088 + chroma 544) = 3 133 440 B ≈ 3.1 MB; a decoder needs ~6-8 references + display, so
   1080p wants ~30 MB and 4K ~190 MB (another port's figure: 192 MiB holds 4K 8-bit).
-- **Lifetime trap, already present for RGB:** `kms_bo_unref()` (`kms_bo.c:353`) withdraws the export name at once
-  but lets clients keep their mappings, and the freed pool range is handed to the next BO (`pool_find`, `:126`).
-  So a client that still maps a freed BO writes into (and can read) the next owner's buffer. Task 45's rule (never
-  reuse a picture's memory while any mapping exists) must be enforced before pictures, which carry other clients'
-  video, share the pool.
+- **Lifetime rule (task 45):** a picture's pool range must not be reused while any other mapping of it exists.
+  Check the current free path (`kms_bo_unref()`, `kms_bo.c:353`, and `pool_find`, `:126`) against that rule before
+  pictures share the pool; details of the check are tracked privately.
 
 ## 2. Plan (smallest path first)
 
@@ -69,9 +67,7 @@ So task 43's first question is answered: **no decoder layout change is needed**,
    `memExport`), and decode into them (the decoder needs only the physical address and a CPU mapping, which the
    export gives). Size the pool for pictures: `-p 64` for 1080p, 192-256 for 4K (task 45); measure free pool after
    20 runs.
-3. **Fix the lifetime trap** first (item 1.3): a freed pool range must not be reused while any mapping of it
-   exists. Either count mappings per BO (the window's own reference) and defer the range's return, or unmap
-   client windows at free (needs kernel help). Same rule as task 42's buffer reuse.
+3. **Enforce the lifetime rule** (item 1.3) before pictures share the pool. Same rule as task 42's buffer reuse.
 4. **Colour encoding (task 44):** map `AVFrame.colorspace` / `color_range`: 601 limited → 1, 709 limited → 2,
    601 full → 3, 2020 limited → 9; 709 full and 2020 full are not available → stay on the CPU/GPU path. Another
    port measured 2020 on the plane up to 11 code values off; keep 2020 off the plane until measured here.
@@ -85,7 +81,7 @@ So task 43's first question is answered: **no decoder layout change is needed**,
   same-scene screenshot against the CPU path (HDMI capture).
 - A 601-tagged HD clip: same-scene against the RGB path (no hue shift).
 - 20 consecutive 1080p plays, then a 1080p play still on the plane (pool fragmentation).
-- Lifetime: a test that keeps a mapping of a freed BO and checks the next owner's buffer is untouched.
+- Lifetime: a test for the rule in item 1.3.
 
 ## 4. Risks
 
