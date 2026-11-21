@@ -126,7 +126,10 @@ if [ -f "${proj}/build.project" ]; then
 $(grep -E '^export [A-Z_][A-Z0-9_]*=[^$" ]*$' "${proj}/build.project" | sed -e 's/^export //')
 EOF
 fi
-cmd=$(cd "$bdir" && PATH="${tc}:$PATH" TARGET="$target" make -n "$obj" 2>/dev/null \
+# Since upstream v3.4.0 (synced 2026-11-17) makes/version.mk reads
+# $(PREFIX_PROJECT)/OS-VERSION and stops without it, so every `make -n` failed
+# and this script reported "could not recover a compile command" for every repo.
+cmd=$(cd "$bdir" && PATH="${tc}:$PATH" TARGET="$target" PREFIX_PROJECT="${repo_root}/.buildroot" make -n "$obj" 2>/dev/null \
         | grep -- '-phoenix-gcc ' | grep -F -- "$(basename "$rel")" || true)
 n=$(printf '%s' "$cmd" | grep -c . || true)
 if [ -z "$cmd" ]; then
