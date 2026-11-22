@@ -2,7 +2,8 @@
 
 2026-11-21. Research by code reading. **Status 2026-11-22: plan step 1 done and on HDMI** (rpi4-kms NV12 + SAND128 on an
 overlay, devices `f214377d`; libdrm_phoenix `cf07327`; `-o 1` project `e7932af`; test `tools/gpu-lane/sand-plane`, manifest
-`2026-11-22-learnings-p`). Next: step 2 (decoder pictures below 1 GiB, from the kms pool) and task 44's colour encoding. Tasks and the measurements that motivate them:
+`2026-11-22-learnings-p`). **Step 2 done 2026-11-22** (ports `2aa2ce8`, `/usr/bin/video-plane`, manifest `2026-11-22-learnings-q`): 1080p HEVC at
+30 fps on the overlay for 1.9 % of a core. Next: task 44's colour encoding, then ffplay / browser on the plane. Tasks and the measurements that motivate them:
 [`pi4-learnings-backlog-addendum-2026-11-20.md`](../inprogress/pi4-learnings-backlog-addendum-2026-11-20.md),
 tasks 43 (SAND on the plane), 44 (colour encoding from the stream tag), 45 (a scan-out pool for pictures). Measured
 on another port: 1080p30 HEVC 23 % of a core on the CPU de-tile + RGB path against 4.4-6.5 % with SAND on the plane;
