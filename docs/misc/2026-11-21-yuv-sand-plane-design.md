@@ -112,10 +112,46 @@ So task 43's first question is answered: **no decoder layout change is needed**,
    - `video-play` sets both for HEVC in drm mode, and falls back to today's path when the overlay refuses a frame
      (TEST_ONLY), e.g. full-range BT.709.
    Verify: CPU % of ffplay HEVC 1080p30 against today's drm mode, A/V sync by ffplay's own stat line, seek/pause.
+   ✅ Done 2026-11-22 (ports `cf07327`…`d85d135`, manifest `2026-11-22-learnings-t`): `VIDEO_PLANE=1 video-play`
+   in drm mode; colour encoding from the stream (task 44).
 2. **Under labwc (Wayland).** The compositor would have to put the client's NV12 dma-buf on the overlay (wlroots
    direct scan-out of a linux-dmabuf surface). SDL's Wayland driver draws with EGL and never offers its decoded
    frames as dma-bufs, so this needs a player that does (a dmabuf video sink), and wlroots' overlay use on top of
    rpi4-kms planes. Larger; after 1.
+
+   **Plan (2026-11-22), in three steps, each useful alone:**
+   - **2a. The client sends the decoder's picture as an NV12 SAND128 dma-buf; labwc composites it on the GPU.**
+     What makes this possible: Mesa's V3D imports `DRM_FORMAT_MOD_BROADCOM_SAND128` NV12 as an external-only
+     texture and blits it to UIF (`v3d_resource.c:1032`, `v3d_blit.c:647`, the "sand8" blit), and libdrm_phoenix
+     already resolves a `/kmsbuf` dma-buf (rpivid_plane.c's buffers) for the render server. In ffplay (our patch
+     set): when `VIDEO_PLANE=1` under Wayland, give the window a `wl_subsurface` of its own and attach each
+     `AV_PIX_FMT_DRM_PRIME` frame there as a `zwp_linux_buffer_params_v1` buffer (fd from the frame's descriptor,
+     modifier SAND128 with the column height), at ffplay's presentation time; SDL's surface keeps the OSD/black
+     background. Check first that labwc advertises NV12 + SAND128 in its linux-dmabuf feedback (it lists what the
+     renderer imports, external-only included). Gain: no CPU NV12→RGB conversion or texture upload (today's
+     windowed path); the GPU blit remains. Verify: ffplay CPU % HEVC 1080p30 windowed vs today; colours against
+     the drm-mode overlay (same scene, task 44's clips); C18-style session x12.
+   - **2b. Fullscreen: direct scan-out.** wlroots' scene already scans a single fullscreen buffer out on the primary
+     plane when the output accepts the buffer's format/modifier (check `wlr_scene` 0.20's conditions: buffer
+     size vs output size, src/dst boxes). Needs rpi4-kms's primary plane to accept NV12 SAND128 (the firmware
+     plane takes it on the overlay already; same SET_PLANE call) and to say so in its IN_FORMATS. Gain: no GPU
+     work at all in fullscreen (`f` in ffplay).
+   - **2c. Windowed on the overlay.** wlroots 0.20 places surfaces on extra planes only through output layers
+     (`wlr_output_layer`, DRM backend with libliftoff; our build has `-Dlibliftoff=disabled`) and labwc would
+     have to use them. Port libliftoff (MIT, small), enable it, and add output-layer use for one video
+     subsurface in labwc. Largest of the three; only if 2a's GPU blit costs real frame rate.
 3. **The browser (WPE).** The usual embedded route is a "hole punch": the page leaves a transparent rectangle and
    the media backend puts the video on a plane beneath (backlog task 46: colour key, no redraw for video-only
    changes). After 1 and 2.
+
+   **Plan (2026-11-22):** WPE plays media through our FFmpeg player (webkit_wpe patch 0030; no GStreamer), so the
+   work is in that player, not in a GStreamer sink.
+   - **3a. HEVC through rpivid in the WebKit player** (decoder `hevc_rpivid`, software output first): the CPU win
+     of hardware decode before any plane work; the player's frame path stays as it is.
+   - **3b. Hole punch.** WebKit's `MediaPlayerPrivateHolePunch` draws the video rectangle transparent; the player
+     puts `drm_prime` frames on the overlay *below* the primary (needs rpi4-kms zpos below primary, and the
+     primary's alpha to reach the HVS: labwc must keep the window's transparent pixels transparent on an ARGB
+     primary). The client does not know its window's screen position under Wayland, so start with fullscreen
+     video (position 0,0) and only then a position protocol or the compositor-side route of 2c.
+   - Verify each: CPU % and dropped frames of a 1080p HEVC `<video>` (the B8 page), colours, seek/pause, a
+     scroll while playing (the hole must track the page).
