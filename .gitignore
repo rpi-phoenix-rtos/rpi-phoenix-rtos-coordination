@@ -84,3 +84,6 @@ tools/quake3-vm/build/
 
 # Transcoded demo clips: large, and reproducible via transcode-for-phoenix.sh
 tools/hevc-decode/testdata/*-phoenix.265
+
+# per-tool build outputs (tools/gpu-lane/*/build.sh)
+tools/gpu-lane/*/build-out/
