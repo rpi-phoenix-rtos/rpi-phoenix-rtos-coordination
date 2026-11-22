@@ -133,6 +133,17 @@ So task 43's first question is answered: **no decoder layout change is needed**,
      1280x720 picture as a `zwp_linux_buffer_params_v1` buffer (one rpi4-kms dumb buffer, two planes, modifier
      `SAND128_COL_HEIGHT(1080)`) and composites it correctly: eight chroma bars, luma ramp, no column tearing
      (HDMI `20261122-165314-sandwl-tick.png`), 30 s, no protocol error. So 2a needs no compositor change.
+     **First player version (2026-11-22, NOT landed):** ports branch `video-wl-subsurface` `3bd562f` (on the
+     publish fork only): ffplay patch 0003 + `files/rpivid/wl/rpivid_wl.c` (desync subsurface of SDL's window,
+     one linux-dmabuf `wl_buffer` per decoder buffer, `wp_viewporter` scaling, a picture held until its
+     `wl_buffer.release`); `video-play` passes the rpivid options in wl mode. Gate AA (HEVC 720p30 windowed under
+     labwc): the picture is right (HDMI `20261122-172731-learnAA-vwl-tick.png`), no errors, but **16.3 fps with
+     ~14 late drops/s, against 30.0 fps and 1 drop for today's CPU path** in the same session (`…-172801-…`).
+     The decoder is not the limit (2.5 ms per picture). Suspects, unmeasured: labwc converts the SAND buffer to
+     UIF on the GPU every frame (Mesa's sand8 blit, `v3d_blit.c:647`) besides compositing; SDL's present on the
+     parent waits for a frame callback that the extra composition delays. Next, if resumed: time labwc's frame
+     (wlroots `WLR_RENDER` / the render server's per-job times) with and without the subsurface, then decide
+     between 2b (scan-out, no GPU work) and a cheaper import.
      Gain: no CPU NV12→RGB conversion or texture upload (today's
      windowed path); the GPU blit remains. Verify: ffplay CPU % HEVC 1080p30 windowed vs today; colours against
      the drm-mode overlay (same scene, task 44's clips); C18-style session x12.
