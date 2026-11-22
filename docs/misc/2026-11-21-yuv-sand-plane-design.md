@@ -128,7 +128,12 @@ So task 43's first question is answered: **no decoder layout change is needed**,
      `AV_PIX_FMT_DRM_PRIME` frame there as a `zwp_linux_buffer_params_v1` buffer (fd from the frame's descriptor,
      modifier SAND128 with the column height), at ffplay's presentation time; SDL's surface keeps the OSD/black
      background. Check first that labwc advertises NV12 + SAND128 in its linux-dmabuf feedback (it lists what the
-     renderer imports, external-only included). Gain: no CPU NV12→RGB conversion or texture upload (today's
+     renderer imports, external-only included). ✅ **Checked on the Pi 2026-11-22** (`tools/gpu-lane/sand-wl`, image
+     Z = masters): labwc offers NV12 with `0x0700000000000004` (SAND128) among four modifiers, accepts sand-plane's
+     1280x720 picture as a `zwp_linux_buffer_params_v1` buffer (one rpi4-kms dumb buffer, two planes, modifier
+     `SAND128_COL_HEIGHT(1080)`) and composites it correctly: eight chroma bars, luma ramp, no column tearing
+     (HDMI `20261122-165314-sandwl-tick.png`), 30 s, no protocol error. So 2a needs no compositor change.
+     Gain: no CPU NV12→RGB conversion or texture upload (today's
      windowed path); the GPU blit remains. Verify: ffplay CPU % HEVC 1080p30 windowed vs today; colours against
      the drm-mode overlay (same scene, task 44's clips); C18-style session x12.
    - **2b. Fullscreen: direct scan-out.** wlroots' scene already scans a single fullscreen buffer out on the primary
