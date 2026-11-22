@@ -806,6 +806,8 @@ bogus ext2 list-corruption crash.
   aborts) were the tests' own stack overflows, not kernel bugs. Bumped to 16 KiB.
 * ★ `991d70c` — `test_condwait` never locked the mutex before `condWait`, which must atomically release
   it, so the kernel correctly returned `-EPERM` and the test reported FAILED against correct code.
+* `f575a9a` *(2026-11-22)* — `unix_socket.fd_order_stream`: descriptors keep their send order on a stream
+  socket across several sends read together (1+1+0+2); passes on the Pi (C18: rules out the kernel).
 * ★ `793e190` *(2026-11-21)* — `stdio_fflush.stdio_fflush_input_syncs_offset` (upstream, arrived with v3.4.0)
   left `stdio_file_test` behind (empty group teardown), so on a persistent root every second run failed
   `stdio_fopenfclose_file` with "Expected 2 Was 9": `fopen(..., "r")` of the "missing" file succeeded and `errno`
