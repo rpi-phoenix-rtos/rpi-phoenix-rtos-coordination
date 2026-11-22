@@ -93,3 +93,28 @@ So task 43's first question is answered: **no decoder layout change is needed**,
 - Firmware plane scaling of YUV is fine for overlays; the primary plane stays RGB (desktop), the video goes to an
   overlay (`-o` overlays, default 0 exposed: expose at least one).
 - Effort: kms import + plane fields S-M; decoder output into kms BOs M; lifetime fix M; player S-M.
+
+## 5. Players on the plane (plan, 2026-11-22)
+
+`video-plane` proves the path but has no audio, seeking or keys. The players people use:
+
+1. **ffplay without a desktop (`video-play`, drm mode): the next step.** SDL's KMSDRM driver owns the primary
+   plane; the overlay is free. Plan:
+   - move `video-plane`'s rpi4-kms dumb-buffer allocator into a small library beside `rpivid_bo_drm.c`
+     (`rpivid_bo_kms.c`, `rpivid_bo_kms_install(card_fd)`), so any player can hand the decoder plane-reachable
+     buffers;
+   - in ffplay (our patch set), when `VIDEO_PLANE=1` and a frame is `AV_PIX_FMT_DRM_PRIME`: skip the SDL texture
+     upload in `video_image_display()` and ADDFB2 + SETPLANE the picture on the overlay at the same moment ffplay
+     would present it (its pacing, audio sync, pause and seek stay as they are); SDL's DRM fd is the card;
+   - decode with `-rpivid_out drm_prime` (a codec private option on the command line) and hold the last three
+     frames as `video-plane` does;
+   - `video-play` sets both for HEVC in drm mode, and falls back to today's path when the overlay refuses a frame
+     (TEST_ONLY), e.g. full-range BT.709.
+   Verify: CPU % of ffplay HEVC 1080p30 against today's drm mode, A/V sync by ffplay's own stat line, seek/pause.
+2. **Under labwc (Wayland).** The compositor would have to put the client's NV12 dma-buf on the overlay (wlroots
+   direct scan-out of a linux-dmabuf surface). SDL's Wayland driver draws with EGL and never offers its decoded
+   frames as dma-bufs, so this needs a player that does (a dmabuf video sink), and wlroots' overlay use on top of
+   rpi4-kms planes. Larger; after 1.
+3. **The browser (WPE).** The usual embedded route is a "hole punch": the page leaves a transparent rectangle and
+   the media backend puts the video on a plane beneath (backlog task 46: colour key, no redraw for video-only
+   changes). After 1 and 2.
