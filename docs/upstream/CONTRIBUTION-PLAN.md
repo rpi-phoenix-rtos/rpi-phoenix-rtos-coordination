@@ -65,11 +65,11 @@ Effort is the work to prepare the PR, not to write the fix:
 
 ## 3. Summary
 
-- **140 candidates examined** (131 on 2026-11-19, F14–F18 and L48 on 2026-11-20, K44–K46 on 2026-11-21). 17 are already fixed or superseded upstream (one of them, `_SC_OPEN_MAX`, is a known upstream issue; L32, L43 and P04 were found fixed on 2026-11-21), 10 are fork-only code (K41, L41 and L42 added on 2026-11-21), and 2 turned out not to be defects (L31, U05). That leaves **111 live candidates**:
+- **141 candidates examined** (131 on 2026-11-19, F14–F18 and L48 on 2026-11-20, K44–K46 on 2026-11-21, L51 on 2026-11-22). 17 are already fixed or superseded upstream (one of them, `_SC_OPEN_MAX`, is a known upstream issue; L32, L43 and P04 were found fixed on 2026-11-21), 10 are fork-only code (K41, L41 and L42 added on 2026-11-21), and 2 turned out not to be defects (L31, U05). That leaves **112 live candidates**:
 
   | kind | count |
   |---|---|
-  | a: generic bug fix | 77 (one of them, K34, also has an aarch64 half) |
+  | a: generic bug fix | 78 (one of them, K34, also has an aarch64 half) |
   | b: aarch64-generic fix | 5 |
   | c: enhancement | 22 |
   | d: report only | 7 |
@@ -282,6 +282,7 @@ Ten PRs, each verified on 2026-11-19 to cherry-pick cleanly onto upstream `maste
 | L47 | Far-future deadline of an unnamed semaphore | a | `203a347` | fork-only file (`pthread/sem_unnamed.c`) | n/a | — | not applicable | — |
 | L48 | Mount table: `MOUNTED` = `/dev/mtab` log on devfs, `mount_record()` for self-mounting servers, `getmntent_r()` fixes (reentrant, malformed lines skipped, octal escapes) — with filesystems `d23e75e`, devices `5658de78`, utils `4bed126` (psh `df`/`mount`), tests `f7ee0b4` | c | `ad42f63` | upstream has no mount table and an empty `<mntent.h>`; `mntent.c` is fork-added | new files; not yet tried | Pi 2026-11-20: `df`, `mount`, `cat /dev/mtab` correct on the NFS root; `test-libc-misc` 247/0 | discussion (design proposal first) | M |
 | L50 | UTF-8 `LC_CTYPE` selected by `setlocale()`; `MB_CUR_MAX` per locale; Unicode `wcwidth()` | c | `84f11b9` (tests `8bbb987`) | upstream has no UTF-8 locale (`origin/master` `fc60045`, 2026-11-21: no UTF-8 in `locale/`, `wchar/`) and no mntent (L48 also new there) | needs the fork's wide-char/wctype layer (CHANGES "wide char / wctype") first | host harness `tools/libwchar-hosttest` (C.UTF-8 45.5 M comparisons vs glibc, 0 diffs); `test-libc-misc` `locale_utf8` | after the wctype batch | L |
+| L51 | `recvmsg()` into more than one iovec left `msg_controllen`, `msg_flags` and `msg_namelen` as passed in: a reader that keeps its control buffer (libwayland, whenever its ring wraps) decodes the previous read's `SCM_RIGHTS` again (KNOWN-ISSUES C18: a compositor imported a client's `wl_shm` pool as its dma-buf) | a | `84d3656` | open (`sys/socket.c` `recvmsg()` at `fc60045`, re-read 2026-11-22) | applies clean (text; the same code compiles in our tree, not yet compiled against upstream) | test `fd_recvmsg_iovecs_controllen` (tests `d06d930`): old libc 66/1, fixed 66/0 on the Pi; C18 session 12/12 windowed starts, 0 wrong imports (gate Y, 2026-11-22, manifest `2026-11-22-learnings-u-c18-recvmsg`) | 1 | S |
 
 ### phoenix-rtos-filesystems
 
@@ -400,6 +401,7 @@ These were cherry-picked onto upstream `phoenix-rtos-tests` `master`. "Registrat
 | `fd_per_message`, `message_4096` | K10, K11 | `f4fb172` | registration conflict |
 | `faultsig` group | K33 (four cases); the rest goes with a private report | `f8ad4dc`, `a781ea9`, `b6e640a` | registration conflict in `libc/signal/main.c` |
 | `kernelhard` | private reports (K36, K37); its buffer-across-a-hole case covers upstream's `map_belongs` fix | `decd769`, `8855cd9` | registration conflict |
+| `unix_socket.fd_recvmsg_iovecs_controllen` | L51 | `d06d930` | conflicts with neighbouring fork tests in `unix-socket.c`; needs the `fd_order_stream` helpers (`f575a9a`): re-derive |
 
 The fork's host harnesses (`tools/*-hosttest/` in this coordination repo) are the strongest evidence for several fixes. They are listed here as a later contribution: maintainers may want some of them in `phoenix-rtos-tests` or in CI.
 

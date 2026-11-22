@@ -126,8 +126,8 @@ upstream target: `ia32-generic-qemu` for general entries, `aarch64a53-zynqmp-qem
 
 ## Summary
 
-86 entries: 63 public (36 full, 27 short) and 23 withheld as security-relevant. Per project: Phoenix-RTOS kernel 14
-public + 13 withheld, libphoenix 18 + 1, filesystems 13 + 3, devices 3 + 1, usb 1 + 2, plo 1, posixsrv 1 + 1, lwip
+87 entries: 64 public (37 full, 27 short) and 23 withheld as security-relevant. Per project: Phoenix-RTOS kernel 14
+public + 13 withheld, libphoenix 19 + 1, filesystems 13 + 3, devices 3 + 1, usb 1 + 2, plo 1, posixsrv 1 + 1, lwip
 3 + 1, build 1 + 1, ports 1; Mesa 5; libnfs 1; libX11 1. A further 26 candidates are already fixed upstream (or being
 fixed in an open upstream pull request), and about 40 were checked and not reported (see the sections at the end).
 
@@ -166,6 +166,7 @@ why); *n/a* = we have no patch for upstream's code.
 | [L29](#l29) | libphoenix, kernel, filesystems | unistd | `unlink()` removes an (empty) directory | data corruption | general | libphoenix `ae9801e` (workaround) | open | n/a | full |
 | [L34](#l34) | libphoenix | pthread | `pthread_self()` is NULL in a forked child | crash | general | libphoenix `f36de2b`, `d67a879` | open | conflicts | full |
 | [L49](#l49) | libphoenix | libm | `pow(-2, 3)` returns `+8`; `pow()`/`fmod()` inaccurate | wrong output | general | libphoenix `6bb0bdc`, `6bf27ab` (msun) | open (`fmod`: dup #1229) | conflicts | full |
+| [L51](#l51) | libphoenix | sys/socket | `recvmsg()` into several iovecs leaves `msg_controllen` (and `msg_flags`, `msg_namelen`) as passed in | data corruption | general | libphoenix `84d3656` | open | clean | full |
 | [L11](#l11) | libphoenix | pthread | `pthread_setspecific()` calls `malloc()` under the key lock | hang | general (latent) | libphoenix `052b590` | open | trivial conflict | short |
 | [L30](#l30) | libphoenix | sys/stat | `rename()` onto an existing file fails with `EEXIST` | wrong output | general | libphoenix `c01f7a7` (do not send) | dup #409 | n/a | short |
 | [L38](#l38) | libphoenix | termios.h | `c_oflag` constants invisible to `#ifdef` | build | general | libphoenix `e9bb8c4` | open | clean | short |
@@ -1070,6 +1071,65 @@ BSD/Sun licences). Upstream's optional libmcs is not affected.
 wrong hashes (31 of 72 constants wrong; 3.6 M ULP error). The host harness compares every function with MPFR.
 
 #### Short form
+
+<a id="l51"></a>
+
+#### L51 — sys/socket: `recvmsg()` into more than one iovec does not report `msg_controllen`, `msg_flags` or `msg_namelen`
+
+- **Issue fields:** Category: BUG · labels `bug`, `POSIX`, `libphoenix` · title "recvmsg() with msg_iovlen > 1 leaves msg_controllen/msg_flags/msg_namelen as passed in"
+- **Severity:** data corruption (a receiver decodes the previous read's `SCM_RIGHTS` again and uses a descriptor it
+  already has as a new one)
+- **Scope:** general
+- **Our fix:** libphoenix `84d3656`; tests `d06d930` (`unix_socket.fd_recvmsg_iovecs_controllen`)
+- **Patch:** clean (the test conflicts with neighbouring fork tests in `unix-socket.c` and uses the helpers of
+  `fd_order_stream`, tests `f575a9a`: re-derive)
+- **Upstream status:** open; checked against libphoenix `fc60045` on 2026-11-22. `sys/socket.c`, `recvmsg()`: with
+  `msg_iovlen > 1` it receives through a local `struct msghdr _msg` into a bounce buffer and copies back only the
+  data (`copy_to_iov`); `_msg.msg_controllen`, `_msg.msg_flags` and `_msg.msg_namelen` never reach the caller.
+- **Tracker:** searched 'recvmsg', 'msg_controllen', 'SCM_RIGHTS': none found.
+
+**Description.** POSIX `recvmsg()` sets `msg_controllen` to the length of the control data received (0 when there
+is none), `msg_flags` to the flags of the message (`MSG_CTRUNC`, `MSG_TRUNC`) and `msg_namelen` to the address
+length. With one iovec libphoenix passes the caller's `msghdr` to the kernel and all three are right. With two or
+more it copies the caller's values into a local `msghdr`, lets the kernel update that one, and leaves the caller's
+fields as they were passed in.
+
+**Expected behavior.** After a read that carries no descriptors, `msg_controllen` is 0 and `CMSG_FIRSTHDR()` is NULL,
+whatever the number of iovecs.
+
+**Actual behavior.** `msg_controllen` keeps the buffer size the caller passed in. A caller that reuses its control
+buffer (libwayland's `wl_connection_read()` keeps it on the stack across its loop and reads into two iovecs whenever
+its ring buffer wraps) decodes the previous read's `SCM_RIGHTS` a second time and queues that descriptor again; the
+next request that carries a descriptor is given the wrong one.
+
+**POSIX requirement.** `recvmsg()`: "Upon successful completion, the msg_controllen member of the msghdr structure
+shall be set to the length of the control data received" and "the msg_flags member ... shall be set" on return.
+
+**Reproduction.**
+```c
+int sv[2], fd = open("/tmp/f", O_CREAT | O_RDWR, 0600);
+union { struct cmsghdr h; char b[CMSG_SPACE(sizeof(int))]; } c;
+char a[1], b[4];
+struct iovec iov[2] = { { a, 1 }, { b, 4 } };
+struct msghdr m = { .msg_iov = iov, .msg_iovlen = 2, .msg_control = c.b, .msg_controllen = sizeof(c.b) };
+socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
+/* send "A" with fd in SCM_RIGHTS, then "B" with no control data */
+recvmsg(sv[1], &m, 0);                    /* "A" + one descriptor: fine */
+m.msg_controllen = sizeof(c.b);
+recvmsg(sv[1], &m, 0);                    /* "B" */
+printf("%u\n", (unsigned)m.msg_controllen);  /* expected 0, actual CMSG_SPACE(sizeof(int)); the old SCM_RIGHTS decodes again */
+```
+
+**Environment.** See the section header.
+
+**Fix.** Copy `msg_namelen`, `msg_controllen` and `msg_flags` from the local `msghdr` back to the caller's after the
+call, in both bounce-buffer branches.
+
+**Evidence.** A Wayland compositor (labwc/wlroots) intermittently imported a client's `wl_shm` pool descriptor as the
+client's dma-buf and killed it with a protocol error: 2-3 of every 6 windowed video starts. A libwayland trace showed
+the client sending the right descriptors; the compositor's request got the descriptor of an earlier request. On the
+Pi the test fails with the old library (66 tests, 1 failure) and passes with the fix; 12 of 12 windowed starts then
+played with no wrong import (2026-11-22).
 
 <a id="l11"></a>
 
